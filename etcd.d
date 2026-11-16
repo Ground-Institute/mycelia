@@ -93,13 +93,35 @@ private struct Out {
     }
 }
 
-// What /v3/kv/range is asked: every key under the prefix.
-size_t rangeBodyInto(char[] dest) {
+// "Bound the prefix read so it stays under the gRPC decoding limit" (CodeRabbit,
+// QNTX #1768): one range carrying every value passes 4 MiB with a few agents.
+// What /v3/kv/range is asked first: every key under the prefix, alone.
+size_t keysBodyInto(char[] dest) {
     auto w = Out(dest);
     w.put(`{"key":"`);
     w.putB64(PREFIX);
     w.put(`","range_end":"`);
     w.putB64(PREFIX_END);
+    w.put(`","keys_only":true}`);
+    return w.full ? 0 : w.o;
+}
+
+private void putNumber(ref Out w, long v) {
+    char[24] d = 0;
+    size_t dl = 0;
+    if (v <= 0) d[dl++] = '0';
+    else while (v > 0 && dl < d.length) { d[dl++] = cast(char)('0' + v % 10); v /= 10; }
+    foreach_reverse (i; 0 .. dl) w.put(d[i .. i + 1]);
+}
+
+// And then each key alone, base64 as etcd gave it, at the revision the keys
+// were read at: what is kept is one moment of the store.
+size_t keyBodyInto(const(char)[] keyB64, long at, char[] dest) {
+    auto w = Out(dest);
+    w.put(`{"key":"`);
+    w.put(keyB64);
+    w.put(`","revision":"`);
+    putNumber(w, at);
     w.put(`"}`);
     return w.full ? 0 : w.o;
 }
@@ -112,12 +134,7 @@ size_t watchBodyInto(long from, char[] dest) {
     w.put(`","range_end":"`);
     w.putB64(PREFIX_END);
     w.put(`","start_revision":"`);
-    char[24] d = 0;
-    size_t dl = 0;
-    long v = from;
-    if (v <= 0) d[dl++] = '0';
-    else while (v > 0 && dl < d.length) { d[dl++] = cast(char)('0' + v % 10); v /= 10; }
-    foreach_reverse (i; 0 .. dl) w.put(d[i .. i + 1]);
+    putNumber(w, from);
     w.put(`"}}`);
     return w.full ? 0 : w.o;
 }
@@ -136,13 +153,12 @@ long revisionOf(const(char)[] answer) {
     return v;
 }
 
-// Where the next `"value"` string begins after at, and where it ends; the
+// Where the next string under key begins after at, and where it ends; the
 // answer's length when there is none.
-private size_t nextValue(const(char)[] answer, size_t at, out size_t end) {
-    enum key = `"value"`;
-    for (size_t i = at; i + key.length < answer.length; i++) {
-        if (answer[i .. i + key.length] != key) continue;
-        size_t j = i + key.length;
+private size_t nextString(const(char)[] answer, const(char)[] key, size_t at, out size_t end) {
+    for (size_t i = at; i + key.length + 2 < answer.length; i++) {
+        if (answer[i] != '"' || answer[i + 1 .. i + 1 + key.length] != key || answer[i + 1 + key.length] != '"') continue;
+        size_t j = i + key.length + 2;
         while (j < answer.length && answer[j] == ' ') j++;
         if (j >= answer.length || answer[j] != ':') continue;
         j++;
@@ -156,28 +172,29 @@ private size_t nextValue(const(char)[] answer, size_t at, out size_t end) {
     return answer.length;
 }
 
-// The node's answer for what is collected, made of each key's value in the
-// order etcd holds them. 0 when it does not fit or a value is not base64:
-// what is cut is not kept.
-size_t collectedInto(const(char)[] answer, char[] dest) {
+// Each key of a range of keys, base64 as etcd gave it, a line each. size_t.max
+// when they do not fit: keys cut short are not the keys.
+size_t keysInto(const(char)[] answer, char[] dest) {
     auto w = Out(dest);
-    w.put(`{"collected":[`);
     size_t at = 0;
-    bool first = true;
     while (true) {
         size_t end;
-        auto start = nextValue(answer, at, end);
+        auto start = nextString(answer, "key", at, end);
         if (start >= answer.length) break;
-        if (!first) w.put(",");
-        first = false;
-        if (w.full) return 0;
-        auto n = unbase64Into(answer[start .. end], dest[w.o .. $]);
-        if (n == size_t.max) return 0;
-        w.o += n;
+        w.put(answer[start .. end]);
+        w.put("\n");
         at = end + 1;
     }
-    w.put("]}");
-    return w.full ? 0 : w.o;
+    return w.full ? size_t.max : w.o;
+}
+
+// The value of the one key a range answered with, as the text it stands for.
+// size_t.max when there is none, it is not base64, or it does not fit.
+size_t valueInto(const(char)[] answer, char[] dest) {
+    size_t end;
+    auto start = nextString(answer, "value", 0, end);
+    if (start >= answer.length) return size_t.max;
+    return unbase64Into(answer[start .. end], dest);
 }
 
 // A watch's message says something changed: it carries events, or etcd ended
@@ -360,29 +377,69 @@ private void refused(long now, const(char)[] what, ref Asked r) {
 private extern (C) void* watchMain(void*) {
     import core.stdc.time : time;
     import core.sys.posix.unistd : sleep;
-    __gshared char[160] request = void;
+    __gshared char[1024] request = void;
     __gshared char[ANSWER_BYTES] kept = void;
+    // The keys of one read, base64, a line each: names alone, far under a value.
+    __gshared char[1 << 20] keys = void;
+    void misread(long at, const(char)[] what) {
+        Asked none;
+        foreach (c; what) if (none.whyLen < none.why.length) none.why[none.whyLen++] = c;
+        refused(at, "read", none);
+    }
     while (true) {
-        auto rb = rangeBodyInto(request[]);
+        auto rb = keysBodyInto(request[]);
         auto r = ask(host_[0 .. hostLen], "/v3/kv/range", request[0 .. rb], false, 10);
         auto now = cast(long) time(null);
         if (r.code != 0 || r.status != 200 || answerOverran) {
-            refused(now, "did not give what is collected", r);
+            refused(now, "did not give the keys of what is collected", r);
             sleep(5);
             continue;
         }
-        auto answer = answerBuf[0 .. answerLen];
-        auto from = revisionOf(answer);
-        auto k = collectedInto(answer, kept[]);
-        if (k == 0 || from < 0) {
-            Asked none;
-            foreach (c; "gave what mycelia does not read as what is collected")
-                if (none.whyLen < none.why.length) none.why[none.whyLen++] = c;
-            refused(now, "read", none);
+        auto from = revisionOf(answerBuf[0 .. answerLen]);
+        auto kn = keysInto(answerBuf[0 .. answerLen], keys[]);
+        if (from < 0 || kn == size_t.max) {
+            misread(now, "gave keys mycelia does not read, or more of them than it holds");
             sleep(5);
             continue;
         }
-        keepAt(keptPath[0 .. keptPathLen], now, kept[0 .. k]);
+        // Each value alone, at the revision the keys were read at.
+        auto w_ = Out(kept[]);
+        w_.put(`{"collected":[`);
+        bool whole = true, first = true;
+        size_t at = 0;
+        while (at < kn) {
+            size_t eol = at;
+            while (eol < kn && keys[eol] != '\n') eol++;
+            auto one = keys[at .. eol];
+            at = eol + 1;
+            auto ob = keyBodyInto(one, from, request[]);
+            auto v = ask(host_[0 .. hostLen], "/v3/kv/range", request[0 .. ob], false, 10);
+            if (v.code != 0 || v.status != 200 || answerOverran) {
+                refused(cast(long) time(null), "did not give a value of what is collected", v);
+                whole = false;
+                break;
+            }
+            if (!first) w_.put(",");
+            first = false;
+            auto n = w_.full ? size_t.max : valueInto(answerBuf[0 .. answerLen], kept[w_.o .. $]);
+            if (n == size_t.max) {
+                misread(cast(long) time(null), "gave a value mycelia does not read, or more than it holds");
+                whole = false;
+                break;
+            }
+            w_.o += n;
+        }
+        if (!whole) {
+            sleep(5);
+            continue;
+        }
+        w_.put("]}");
+        if (w_.full) {
+            misread(now, "gave more than mycelia holds of what is collected");
+            sleep(5);
+            continue;
+        }
+        keepAt(keptPath[0 .. keptPathLen], now, kept[0 .. w_.o]);
 
         // Watched from the revision after the one read, until something
         // changes, the watch ends, or it waited WATCH_SECONDS.
