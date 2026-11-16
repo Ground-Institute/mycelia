@@ -65,7 +65,16 @@ the app is, and holds the person's session:
 "i want to get past it"
 
 Only a binary signed with the team's profile and its Keychain group sees the
-session, so mycelia is built as `Mycelia.app` and signed: `make ug/Mycelia.app`,
+session, so mycelia is built as `Mycelia.app` and signed: `make Mycelia.app`,
 with how this machine signs in `~/.config/mycelia/signing.mk`, outside the
-repository. `~/.local/bin/mycelia` points into it, and `make install-ug`
-registers the app for `mycelia://`.
+repository. `~/.local/bin/mycelia` points into it, and `make install`
+registers the app for `mycelia://`. Off a Mac, `make install` puts the binary
+in `~/.local/bin`, and `nix build .#mycelia` builds it, as k does.
+
+`make test` runs the tests. mycelia was `ug/mycelia.d` in
+[Ground-Code](https://github.com/Ground-Institute/Ground-Code), and this
+history is its own and that of the modules it is built with: `tmux.d`,
+`qntx.d`, `statusline.d`, `sql.d`, `named.d`, `probe.d`, `json.d`, `http.d`,
+`zbuf.d`, `token.d` and `signed.d` are copies of Ground-Code's, which ug,
+ground_tmux, ag and `ground collected` there still read what mycelia keeps
+with.

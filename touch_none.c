@@ -1,5 +1,5 @@
-// The Keychain and the door, on a machine that has neither (ug/touch.c and
-// ug/door.m are the Mac's).
+// The Keychain and the door, on a machine that has neither (touch.c and
+// door.m are the Mac's).
 //
 // mycelia on such a machine asks the node and keeps what it learns for the
 // sessions there, as on the Mac. It holds no person's session, so a press made

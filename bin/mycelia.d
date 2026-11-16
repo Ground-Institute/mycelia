@@ -5,14 +5,14 @@ import mycelia : myceliaMain, verbOf, Verb, SOCKET, DOOR_PATH, homeUrlInto, tick
     sessionSaidPathInto;
 static import zbuf;
 
-// The Keychain, behind Touch ID (ug/touch.c).
+// The Keychain, behind Touch ID (touch.c).
 extern (C) int touch_keep(const(ubyte)* held, int n);
 extern (C) int touch_take(ubyte* out_, int cap, const(char)* prompt, int* n);
 extern (C) void touch_said(int st, char* out_, int cap);
 extern (C) int touch_forget_seed();
-// The url the system opened Mycelia.app with (ug/door.m).
+// The url the system opened Mycelia.app with (door.m).
 extern (C) int door_url(char* out_, int cap, double seconds);
-// The person's own confirmation, by Touch ID or the Mac's password (ug/door.m).
+// The person's own confirmation, by Touch ID or the Mac's password (door.m).
 extern (C) int touch_ask(const(char)* reason, char* why, int cap);
 extern (C) void arc4random_buf(void* buf, size_t n);
 
@@ -56,7 +56,7 @@ int press(const(char)[] path, const(char)[] body_, ref zbuf.ZBuf reply) {
         }
         sessionLen = n;
         // A session kept behind a touch on every read is kept again as one
-        // read once a boot, so this touch is its last (ug/touch.c touch_keep).
+        // read once a boot, so this touch is its last (touch.c touch_keep).
         auto kept = touch_keep(cast(const(ubyte)*) session.ptr, cast(int) sessionLen);
         if (kept != 0) {
             import core.stdc.stdio : fprintf, stderr;

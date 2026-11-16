@@ -1,0 +1,6 @@
+mycelia
+*.o
+Mycelia.app/
+mycelia.entitlements
+build/
+result

@@ -211,7 +211,7 @@ const(char)[] newsPass(const(char)[] home) {
 
         // What sky speaks: the conclusion, where, and the run to open.
         // Decoded once here, because leaveNews encodes it again for the row.
-        // As long as the store keeps (ug/sql.d NEWS_BYTES): a message cut at
+        // As long as the store keeps (sql.d NEWS_BYTES): a message cut at
         // 1 KiB here reached Tether ending at point 4 of 4. One longer still
         // is said to be, with where it is whole, and is never cut quietly.
         import json : jsonUnescapeInto;
