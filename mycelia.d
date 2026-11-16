@@ -680,12 +680,23 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
     auto fd = listenAt(home);
     long collectedAt = 0;
     bool pressed = false;
+    // "our gap is kv"
+    // Where an etcd is named, what is collected is watched there (etcd.d),
+    // and a thread of its own keeps it; the passes ask the node for it no more.
+    bool watched = false;
+    {
+        import etcd : etcdAt = endpoint, watchFrom;
+        auto at = etcdAt();
+        __gshared char[512] collectedPath = void;
+        auto cp = collectedPathInto(home, collectedPath[]);
+        if (at !is null && cp > 0) watched = watchFrom(at, collectedPath[0 .. cp]);
+    }
     while (true) {
         auto now = cast(long) time(null);
         __gshared char[8192] line = void;
         auto n = passInto(home, now, line[]);
         keep(home, now, line[0 .. n]);
-        if (collectedDue(collectedAt, now, pressed)) {
+        if (!watched && collectedDue(collectedAt, now, pressed)) {
             collectedPass(home, now);
             collectedAt = now;
         }
