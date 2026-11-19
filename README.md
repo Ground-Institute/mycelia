@@ -23,6 +23,16 @@ It asks the node for:
   `collected`: what waits for each session, and what each session said that
   waits for another
 
+"our gap is kv"
+
+Where `QNTX_ETCD_ENDPOINT` names the etcd the node keeps what is collected in
+(QNTX `[etcd] endpoint`, a key for each agent under `/collected/`), mycelia
+does not ask the node for it: it reads the keys once, watches them from the
+revision it read, and keeps them again in `collected`, in the shape the
+node's answer has, each time one changes. A watch that ends, or that waited
+five minutes, is read again whole. What etcd did not answer is kept in
+`collected` in its place, as a refusal of the node's is.
+
 "i see, so the tmux row, would just be named like, ground_tmux"
 
 ground_tmux draws the row from the store and asks the node nothing.
