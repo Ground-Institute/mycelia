@@ -390,13 +390,14 @@ Verb verbOf(const(char)[] verb) {
 enum DOOR = "mycelia://door";
 private enum DOOR_QUERY = "door=mycelia%3A%2F%2Fdoor";
 
-// Where the browser goes for the passkey. 0 when no node is named.
-size_t homeUrlInto(const(char)[] host, char[] dest) {
+// Where the browser goes for the passkey: the node's way home, or laye's door
+// (laye mycelia_door.rs). 0 when nowhere is named.
+size_t homeUrlInto(const(char)[] host, char[] dest, bool atLaye = false) {
     if (host.length == 0) return 0;
     size_t o = 0;
     void put(const(char)[] t) { foreach (c; t) if (o < dest.length) dest[o++] = c; }
     put(host);
-    put("/auth/door/home?");
+    put(atLaye ? "/laye/door/home?" : "/auth/door/home?");
     put(DOOR_QUERY);
     if (o < dest.length) dest[o] = 0;
     return o;
@@ -421,11 +422,11 @@ const(char)[] ticketOf(const(char)[] url) {
 }
 
 // Where the ticket is spent for the session, naming the door it was for.
-size_t resultUrlInto(const(char)[] host, const(char)[] ticket, char[] dest) {
+size_t resultUrlInto(const(char)[] host, const(char)[] ticket, char[] dest, bool atLaye = false) {
     size_t o = 0;
     void put(const(char)[] t) { foreach (c; t) if (o < dest.length) dest[o++] = c; }
     put(host);
-    put("/auth/door/home/result?home=");
+    put(atLaye ? "/laye/door/home/result?home=" : "/auth/door/home/result?home=");
     put(ticket);
     put("&");
     put(DOOR_QUERY);
@@ -474,6 +475,24 @@ bool pressAllowed(const(char)[] path) {
     }
     return false;
 }
+
+// "ag's presses go to laye, through a laye door for mycelia."
+// A press as ag asks it, /api/collected/<act>, made at laye: /laye/collected/<act>,
+// whose body laye reads as the node's. 0 for a path that is no press.
+size_t layePressUrlInto(const(char)[] laye, const(char)[] path, char[] dest) {
+    enum prefix = "/api/collected/";
+    if (!pressAllowed(path)) return 0;
+    size_t o = 0;
+    void put(const(char)[] t) { foreach (c; t) if (o < dest.length) dest[o++] = c; }
+    put(laye);
+    put("/laye/collected/");
+    put(path[prefix.length .. $]);
+    if (o < dest.length) dest[o] = 0;
+    return o;
+}
+
+// What is collected, at laye, as the person's door session reads it.
+enum LAYE_COLLECTED = "/laye/collected";
 
 // "yes, build that"
 // A press is a click in ag, asked over the socket as HTTP with the secret ag
@@ -537,6 +556,9 @@ Request requestOf(const(char)[] asked) {
 import zbuf : ZBuf;
 alias Presses = int function(const(char)[] path, const(char)[] body_, ref ZBuf reply);
 alias Doors = int function(const(char)[] url, ref ZBuf reply);
+// What is collected, asked of laye in the person's session and kept where ag
+// reads it; given by the binary that holds the session.
+alias Collects = void function(const(char)[] home, long now);
 
 // The socket, made owner-only. -1 when it could not be.
 private int listenAt(const(char)[] home) {
@@ -664,7 +686,13 @@ private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pair
         auto press = pressOf(asked[0 .. n]);
         if (press.path == DOOR_PATH) {
             if (doors is null) reply.put("0\nthis mycelia is no door");
-            else doors(press.body_, reply);
+            else {
+                doors(press.body_, reply);
+                // "mycelia could not ask the node: laye 401"
+                // 「[Opus 5.5] A session the door just collected is read with at once,」
+                // 「[Opus 5.5] not after the five minutes the last read waits out.」
+                pressed = true;
+            }
         } else {
             // "BUT AG WOULD KNOW, RIGHT ?"
             reply.put("0\na press is a click in ag, and this was asked of mycelia's socket by something else");
@@ -675,11 +703,17 @@ private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pair
 }
 
 // The whole of mycelia: a pass, kept, then a wait for presses, until it is stopped.
-int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, Pairs pairs = null) {
+int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, Pairs pairs = null,
+                Collects collects = null) {
     import core.stdc.time : time;
+    import probe : laye;
     auto fd = listenAt(home);
     long collectedAt = 0;
     bool pressed = false;
+    // "it needs to move to laye anyways"
+    // Where a laye is named, what is collected is asked of it, in the
+    // person's session, and neither the node nor the node's etcd is.
+    bool atLaye = laye() !is null && collects !is null;
     // "our gap is kv"
     // Where an etcd is named, what is collected is watched there (etcd.d),
     // and a thread of its own keeps it; the passes ask the node for it no more.
@@ -689,7 +723,7 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
         auto at = etcdAt();
         __gshared char[512] collectedPath = void;
         auto cp = collectedPathInto(home, collectedPath[]);
-        if (at !is null && cp > 0) watched = watchFrom(at, collectedPath[0 .. cp]);
+        if (!atLaye && at !is null && cp > 0) watched = watchFrom(at, collectedPath[0 .. cp]);
     }
     while (true) {
         auto now = cast(long) time(null);
@@ -697,7 +731,8 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
         auto n = passInto(home, now, line[]);
         keep(home, now, line[0 .. n]);
         if (!watched && collectedDue(collectedAt, now, pressed)) {
-            collectedPass(home, now);
+            if (atLaye) collects(home, now);
+            else collectedPass(home, now);
             collectedAt = now;
         }
         pressed = waitPresses(fd, PASS, presses, doors, pairs);

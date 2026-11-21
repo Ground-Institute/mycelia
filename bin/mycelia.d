@@ -2,7 +2,7 @@ module bin.mycelia;
 
 // "so, why would the part that asks the node, not be able to be its own tiny binary"
 import mycelia : myceliaMain, verbOf, Verb, SOCKET, DOOR_PATH, homeUrlInto, ticketOf, resultUrlInto,
-    sessionSaidPathInto;
+    sessionSaidPathInto, layePressUrlInto;
 static import zbuf;
 
 // The Keychain, behind Touch ID (touch.c).
@@ -19,7 +19,9 @@ extern (C) void arc4random_buf(void* buf, size_t n);
 // The person's session, once a touch has taken it out of the Keychain or the
 // door has just collected it: held until mycelia stops, which a reboot or a
 // restart is.
-__gshared char[256] session = void;
+// laye's door session is a JWT naming laye and the person by did:key, about
+// 500 bytes; the node's is shorter.
+__gshared char[1024] session = void;
 __gshared size_t sessionLen;
 
 // Apple's words for an OSStatus.
@@ -38,36 +40,48 @@ void putStatus(ref zbuf.ZBuf b, int st) {
 
 // A press, made in the person's session: the node's status on the first line
 // of reply, its body after; 0 and why when it was not asked.
+// The person's session out of the Keychain, once a run: false, with why in
+// reply, when it was not taken out.
+bool takeSession(ref zbuf.ZBuf reply) {
+    if (sessionLen > 0) return true;
+    int n = 0;
+    auto st = touch_take(cast(ubyte*) session.ptr, session.length,
+        "mycelia: trust your presses until this Mac restarts\0".ptr, &n);
+    if (st != 0 || n <= 0) {
+        reply.put("0\nthe person's session was not taken out of the Keychain: OSStatus ");
+        putStatus(reply, st);
+        reply.put(" ");
+        reply.put(saidOf(st));
+        // errSecItemNotFound: nothing was ever collected at the door.
+        reply.put(st == -25300 ? " (mycelia connect collects one)" : "");
+        return false;
+    }
+    sessionLen = n;
+    // A session kept behind a touch on every read is kept again as one
+    // read once a boot, so this touch is its last (touch.c touch_keep).
+    auto kept = touch_keep(cast(const(ubyte)*) session.ptr, cast(int) sessionLen);
+    if (kept != 0) {
+        import core.stdc.stdio : fprintf, stderr;
+        fprintf(stderr, "mycelia: the session was not kept again to be read without a touch: OSStatus %d %.*s\n",
+            kept, cast(int) saidOf(kept).length, saidOf(kept).ptr);
+    }
+    return true;
+}
+
 int press(const(char)[] path, const(char)[] body_, ref zbuf.ZBuf reply) {
     import http : httpPostInto;
-    import probe : host;
-    if (sessionLen == 0) {
-        int n = 0;
-        auto st = touch_take(cast(ubyte*) session.ptr, session.length,
-            "mycelia: trust your presses until this Mac restarts\0".ptr, &n);
-        if (st != 0 || n <= 0) {
-            reply.put("0\nthe person's session was not taken out of the Keychain: OSStatus ");
-            putStatus(reply, st);
-            reply.put(" ");
-            reply.put(saidOf(st));
-            // errSecItemNotFound: nothing was ever collected at the door.
-            reply.put(st == -25300 ? " (mycelia connect collects one)" : "");
-            return 1;
-        }
-        sessionLen = n;
-        // A session kept behind a touch on every read is kept again as one
-        // read once a boot, so this touch is its last (touch.c touch_keep).
-        auto kept = touch_keep(cast(const(ubyte)*) session.ptr, cast(int) sessionLen);
-        if (kept != 0) {
-            import core.stdc.stdio : fprintf, stderr;
-            fprintf(stderr, "mycelia: the session was not kept again to be read without a touch: OSStatus %d %.*s\n",
-                kept, cast(int) saidOf(kept).length, saidOf(kept).ptr);
-        }
-    }
+    import probe : host, laye;
+    if (!takeSession(reply)) return 1;
     __gshared zbuf.ZBuf url;
     url.reset();
-    url.put(host());
-    url.put(path);
+    // "ag's presses go to laye, through a laye door for mycelia."
+    if (laye() !is null) {
+        __gshared char[512] at = void;
+        url.put(at[0 .. layePressUrlInto(laye(), path, at[])]);
+    } else {
+        url.put(host());
+        url.put(path);
+    }
     __gshared char[65536] answer = void;
     auto r = httpPostInto(url.slice(), body_, session[0 .. sessionLen], answer[], 60);
     reply.putUint(cast(ulong) r.status);
@@ -108,6 +122,46 @@ int pair(ref zbuf.ZBuf reply) {
     return 0;
 }
 
+// "mycelia reads laye's collections, so ag shows them in the session."
+// What is collected, asked of laye in the person's session and kept where ag
+// reads it. The session is taken out of the Keychain once a run; refused, it
+// is asked for again by a press or by mycelia connect, not every pass.
+__gshared bool takeRefused;
+
+void collects(const(char)[] home, long now) {
+    import http : httpGet;
+    import probe : laye, BODY_BYTES;
+    import mycelia : keepAt, collectedPathInto, LAYE_COLLECTED;
+    __gshared char[512] path = void;
+    auto p = collectedPathInto(home, path[]);
+    if (p == 0) return;
+    __gshared zbuf.ZBuf why;
+    why.reset();
+    if (sessionLen == 0) {
+        if (takeRefused || !takeSession(why)) {
+            takeRefused = true;
+            why.reset();
+            why.put("laye: no session of the person's is held; mycelia connect collects one");
+            keepAt(path[0 .. p], now, why.slice());
+            return;
+        }
+    }
+    __gshared zbuf.ZBuf url;
+    url.reset();
+    url.put(laye());
+    url.put(LAYE_COLLECTED);
+    __gshared char[BODY_BYTES] answer = void;
+    auto r = httpGet(url.slice(), session[0 .. sessionLen], answer[], 30);
+    if (r.status == 200) {
+        keepAt(path[0 .. p], now, answer[0 .. r.len]);
+        return;
+    }
+    why.put("laye ");
+    if (r.status > 0) why.putUint(cast(ulong) r.status);
+    else why.put(r.why());
+    keepAt(path[0 .. p], now, why.slice());
+}
+
 // What mycelia says of the session, beside the row: the moment, then the words.
 void sessionSaid(const(char)[] words) {
     import mycelia : keepAt;
@@ -123,7 +177,7 @@ void sessionSaid(const(char)[] words) {
 // the words.
 int door(const(char)[] url, ref zbuf.ZBuf reply) {
     import http : httpGet;
-    import probe : host;
+    import probe : host, laye;
     import json : jsonString;
     __gshared zbuf.ZBuf said;
     said.reset();
@@ -138,7 +192,7 @@ int door(const(char)[] url, ref zbuf.ZBuf reply) {
         return 1;
     }
     __gshared char[1024] at = void;
-    auto u = resultUrlInto(host(), ticket, at[]);
+    auto u = laye() !is null ? resultUrlInto(laye(), ticket, at[], true) : resultUrlInto(host(), ticket, at[]);
     __gshared char[8192] answer = void;
     auto r = httpGet(at[0 .. u], null, answer[], 30);
     auto body_ = answer[0 .. r.len];
@@ -159,6 +213,7 @@ int door(const(char)[] url, ref zbuf.ZBuf reply) {
     }
     foreach (i, c; held) session[i] = c;
     sessionLen = held.length;
+    takeRefused = false;
     said.put("200\nkept, signed in as ");
     auto name = jsonString(body_, "name");
     said.put(name !is null && name.length > 0 ? name : "nobody named");
@@ -222,7 +277,7 @@ int handOver(int fd) {
 // browser back to the door, and the mycelia that is running collects the
 // session. This waits for what it says of it.
 int connectMain(const(char)[] home) {
-    import probe : host;
+    import probe : host, laye;
     import mycelia : keptOf;
     import core.stdc.stdio : fwrite, fflush, stdout, fopen, fread, fclose;
     import core.stdc.time : time;
@@ -236,7 +291,7 @@ int connectMain(const(char)[] home) {
     close(fd);
 
     __gshared char[512] url = void;
-    auto u = homeUrlInto(host(), url[]);
+    auto u = laye() !is null ? homeUrlInto(laye(), url[], true) : homeUrlInto(host(), url[]);
     if (u == 0) { say("mycelia connect: no node is named to sign in to\n"); return 1; }
     auto since = cast(long) time(null);
     const(char)*[3] argv = ["/usr/bin/open\0".ptr, &url[0], null];
@@ -310,7 +365,7 @@ extern (C) int main(int argc, char** argv) {
                     st == 0 ? "removed from the Keychain".ptr : "not removed from the Keychain".ptr,
                     st, cast(int) saidOf(st).length, saidOf(st).ptr);
             }
-            return myceliaMain(h[0 .. hl], &press, &door, &pair);
+            return myceliaMain(h[0 .. hl], &press, &door, &pair, &collects);
     }
 }
 
