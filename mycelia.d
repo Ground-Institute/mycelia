@@ -686,7 +686,13 @@ private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pair
         auto press = pressOf(asked[0 .. n]);
         if (press.path == DOOR_PATH) {
             if (doors is null) reply.put("0\nthis mycelia is no door");
-            else doors(press.body_, reply);
+            else {
+                doors(press.body_, reply);
+                // "mycelia could not ask the node: laye 401"
+                // 「[Opus 5.5] A session the door just collected is read with at once,」
+                // 「[Opus 5.5] not after the five minutes the last read waits out.」
+                pressed = true;
+            }
         } else {
             // "BUT AG WOULD KNOW, RIGHT ?"
             reply.put("0\na press is a click in ag, and this was asked of mycelia's socket by something else");
