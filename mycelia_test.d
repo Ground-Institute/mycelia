@@ -195,3 +195,39 @@ static assert(!collectedDue(1000, 1000 + COLLECTED_EVERY - 1, false), "asked wit
 static assert(collectedDue(1000, 1000 + COLLECTED_EVERY, false));
 static assert(collectedDue(1000, 1001, true), "a press makes it due");
 static assert(COLLECTED_EVERY >= 300);
+
+// "ag's presses go to laye, through a laye door for mycelia."
+// At laye the way home is laye's door, and a press as ag asks it is made at
+// /laye/collected/<act>, which reads the node's body.
+import mycelia : layePressUrlInto;
+
+char[256] layeHomeUrl(const(char)[] host)() {
+    char[256] buf = '.';
+    homeUrlInto(host, buf[], true);
+    return buf;
+}
+
+enum layeHome = "https://l.sbvh.nl/laye/door/home?door=mycelia%3A%2F%2Fdoor";
+static assert(layeHomeUrl!"https://l.sbvh.nl"()[0 .. layeHome.length] == layeHome);
+
+char[256] layeResultUrl(const(char)[] host, const(char)[] ticket)() {
+    char[256] buf = '.';
+    resultUrlInto(host, ticket, buf[], true);
+    return buf;
+}
+
+enum layeResult = "https://l.sbvh.nl/laye/door/home/result?home=AbC-_9&door=mycelia%3A%2F%2Fdoor";
+static assert(layeResultUrl!("https://l.sbvh.nl", "AbC-_9")()[0 .. layeResult.length] == layeResult);
+
+char[256] layePress(const(char)[] laye, const(char)[] path)() {
+    char[256] buf = '.';
+    layePressUrlInto(laye, path, buf[]);
+    return buf;
+}
+
+enum layeRelease = "https://l.sbvh.nl/laye/collected/release";
+static assert(layePress!("https://l.sbvh.nl", "/api/collected/release")()[0 .. layeRelease.length] == layeRelease);
+static assert(layePressUrlInto("https://l.sbvh.nl", "/api/collected", new char[256]) == 0,
+    "listing is no press");
+static assert(layePressUrlInto("https://l.sbvh.nl", "/auth/admit", new char[256]) == 0,
+    "only what a person does with what is collected is made at laye");

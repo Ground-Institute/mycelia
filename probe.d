@@ -18,6 +18,19 @@ const(char)[] host() {
     return n > 0 ? e[0 .. n] : HOST;
 }
 
+// "it needs to move to laye anyways"
+// LAYE_HOST names the laye what is collected is kept at: mycelia's door, what
+// is collected, and what a person does with it are asked of laye; the node's
+// row and its news of the node. Unset, all of it is the node's.
+const(char)[] laye() {
+    import core.stdc.stdlib : getenv;
+    auto e = getenv("LAYE_HOST\0".ptr);
+    if (e is null) return null;
+    size_t n = 0;
+    while (e[n] != 0) n++;
+    return n > 0 ? e[0 .. n] : null;
+}
+
 // The request is made through libcurl in this process, the way ground makes
 // every request of its own. There is no program to find, so no path to pin and
 // no PATH to be wrong about.
