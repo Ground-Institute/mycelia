@@ -587,7 +587,9 @@ private int listenAt(const(char)[] home) {
 }
 
 // The secrets ag was given when the person paired it, each with a finger:
-// held while mycelia runs, never written anywhere.
+// held while mycelia runs, and kept in mycelia's Keychain group alone (touch.c
+// touch_keep_paired), which only this signed binary reads, so a restart asks
+// no finger again (laye PLAN.md P2P2A2A_A_004_06).
 __gshared char[64][16] paired;
 __gshared size_t pairedCount;
 
@@ -595,6 +597,16 @@ void keepSecret(const(char)[] secret) {
     if (secret.length != 64) return;
     auto at = pairedCount < paired.length ? pairedCount++ : 0;
     foreach (i, c; secret) paired[at][i] = c;
+}
+
+// Every secret held, one after another, as they are kept.
+const(char)[] pairedBytes() {
+    return (cast(char*) paired.ptr)[0 .. pairedCount * 64];
+}
+
+// The secrets kept before, held again: each 64 bytes of what was kept.
+void restoreSecrets(const(char)[] kept) {
+    for (size_t at = 0; at + 64 <= kept.length; at += 64) keepSecret(kept[at .. at + 64]);
 }
 
 bool heldSecret(const(char)[] secret) {
@@ -663,6 +675,10 @@ private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pair
                 if (pairs is null) reply.put("0\nthis mycelia pairs nothing");
                 else pairs(reply);
             } else if (!heldSecret(req.secret)) {
+                // Said in mycelia's log, so a finger asked again has its cause on record.
+                import core.stdc.stdio : fprintf, stderr;
+                fprintf(stderr, "mycelia: a press on %.*s was refused: its secret (%d bytes) is none of the %d paired\n",
+                    cast(int) req.path.length, req.path.ptr, cast(int) req.secret.length, cast(int) pairedCount);
                 reply.put("401\nthis is no click in ag paired with the person's finger");
             } else if (!pressAllowed(req.path)) {
                 reply.put("0\nmycelia makes in the person's session only what a person does with what is collected, and this asked for ");

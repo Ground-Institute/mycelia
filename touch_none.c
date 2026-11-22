@@ -24,6 +24,19 @@ int touch_take(unsigned char *out, int cap, const char *prompt, int *n) {
     return NO_KEYCHAIN;
 }
 
+int touch_keep_paired(const unsigned char *held, int n) {
+    (void) held;
+    (void) n;
+    return NO_KEYCHAIN;
+}
+
+int touch_take_paired(unsigned char *out, int cap, int *n) {
+    (void) out;
+    (void) cap;
+    *n = 0;
+    return NO_KEYCHAIN;
+}
+
 // There was never a seed kept here: nothing to remove, said as nothing found.
 int touch_forget_seed(void) {
     return -25300;
