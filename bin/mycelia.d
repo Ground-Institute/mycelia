@@ -128,10 +128,17 @@ int pair(ref zbuf.ZBuf reply) {
 // is asked for again by a press or by mycelia connect, not every pass.
 __gshared bool takeRefused;
 
+// The session the watch at laye asks with (pushed.d): none until a press, a
+// pass or mycelia connect has taken it out.
+const(char)[] heldSession() { return session[0 .. sessionLen]; }
+
 void collects(const(char)[] home, long now) {
     import http : httpGet;
     import probe : laye, BODY_BYTES;
     import mycelia : keepAt, collectedPathInto, LAYE_COLLECTED;
+    import pushed : live;
+    // laye says each change as it happens while its watch is held.
+    if (live()) return;
     __gshared char[512] path = void;
     auto p = collectedPathInto(home, path[]);
     if (p == 0) return;
@@ -364,6 +371,15 @@ extern (C) int main(int argc, char** argv) {
                 fprintf(stderr, "mycelia: the person's old seed was %s: OSStatus %d %.*s\n",
                     st == 0 ? "removed from the Keychain".ptr : "not removed from the Keychain".ptr,
                     st, cast(int) saidOf(st).length, saidOf(st).ptr);
+            }
+            {
+                import probe : laye;
+                import mycelia : collectedPathInto;
+                import pushed : watchAt;
+                __gshared char[512] collected = void;
+                auto cp = collectedPathInto(h[0 .. hl], collected[]);
+                if (laye() !is null && cp > 0 && !watchAt(laye(), collected[0 .. cp], &heldSession))
+                    fputs("mycelia: the watch at laye did not start; what is collected is asked for every five minutes\n", stderr);
             }
             return myceliaMain(h[0 .. hl], &press, &door, &pair, &collects);
     }

@@ -20,7 +20,7 @@ else
 
 # "so, why would the part that asks the node, not be able to be its own tiny binary"
 # No druntime and no GC: ldc2 -betterC, the modules below and what they link.
-SOURCES = bin/mycelia.d mycelia.d etcd.d tmux.d qntx.d statusline.d sql.d named.d probe.d json.d \
+SOURCES = bin/mycelia.d mycelia.d etcd.d pushed.d tmux.d qntx.d statusline.d sql.d named.d probe.d json.d \
           http.d zbuf.d token.d signed.d
 LIBS = -L-lsqlite3 -L-lcurl -L-lsodium
 
@@ -83,6 +83,7 @@ test:
 	ldc2 -c -betterC -od=$(TEST_OUT) -I=. tmux.d statusline.d json.d tmux_test.d
 	ldc2 -c -betterC -od=$(TEST_OUT) -I=. mycelia.d tmux.d statusline.d json.d mycelia_test.d
 	ldc2 -c -betterC -od=$(TEST_OUT) -I=. etcd.d mycelia.d tmux.d statusline.d json.d etcd_test.d
+	ldc2 -c -betterC -od=$(TEST_OUT) -I=. pushed.d probe.d qntx.d mycelia.d tmux.d statusline.d json.d zbuf.d pushed_test.d
 	ldc2 -betterC -of=$(TEST_OUT)/named-test -I=. named.d named_test.d
 	$(TEST_OUT)/named-test
 	ldc2 -unittest -main -of=$(TEST_OUT)/signed-test -I=. signed.d signed_test.d zbuf.d token.d -L-lsodium
