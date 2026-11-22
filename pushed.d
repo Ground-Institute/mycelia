@@ -74,6 +74,8 @@ private __gshared size_t saidLen;
 private __gshared bool overran;
 private __gshared char[512] keptPath = 0;
 private __gshared size_t keptPathLen;
+private __gshared char[BODY_BYTES] last_ = void;
+private __gshared size_t lastLen;
 
 // The moment and the text, written beside `collected` and moved over it.
 private void keep(const(char)[] text_) {
@@ -108,8 +110,18 @@ private extern (C) size_t intoSaid(char* ptr, size_t size, size_t nmemb, void* u
         auto data = nextEvent(said_[0 .. saidLen], taken);
         if (taken == 0) break;
         if (data !is null) {
+            // The last whole laye said, kept to be stamped again.
+            if (data.length <= last_.length) {
+                foreach (i, c; data) last_[i] = c;
+                lastLen = data.length;
+            }
             keep(data);
             atomicStore(live_, true);
+        } else if (lastLen > 0) {
+            // "mycelia last asked the node 1140s ago: what it kept is not current"
+            // laye saying it is still there, with nothing changed, is what was
+            // kept being current: kept again with this moment.
+            keep(last_[0 .. lastLen]);
         }
         foreach (i; taken .. saidLen) said_[i - taken] = said_[i];
         saidLen -= taken;

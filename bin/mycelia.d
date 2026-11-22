@@ -10,6 +10,8 @@ extern (C) int touch_keep(const(ubyte)* held, int n);
 extern (C) int touch_take(ubyte* out_, int cap, const(char)* prompt, int* n);
 extern (C) void touch_said(int st, char* out_, int cap);
 extern (C) int touch_forget_seed();
+extern (C) int touch_keep_paired(const(ubyte)* held, int n);
+extern (C) int touch_take_paired(ubyte* out_, int cap, int* n);
 // The url the system opened Mycelia.app with (door.m).
 extern (C) int door_url(char* out_, int cap, double seconds);
 // The person's own confirmation, by Touch ID or the Mac's password (door.m).
@@ -117,6 +119,13 @@ int pair(ref zbuf.ZBuf reply) {
     enum hex = "0123456789abcdef";
     foreach (i, b; raw) { secret[i * 2] = hex[b >> 4]; secret[i * 2 + 1] = hex[b & 15]; }
     keepSecret(secret[]);
+    {
+        import mycelia : pairedBytes, pairedCount;
+        import core.stdc.stdio : fprintf, stderr;
+        auto kept = touch_keep_paired(cast(const(ubyte)*) pairedBytes().ptr, cast(int) pairedBytes().length);
+        fprintf(stderr, "mycelia: ag was paired with the person's finger; %d paired, kept in the Keychain: OSStatus %d %.*s\n",
+            cast(int) pairedCount, kept, cast(int) saidOf(kept).length, saidOf(kept).ptr);
+    }
     reply.put("200\n");
     reply.put(secret[]);
     return 0;
@@ -380,6 +389,17 @@ extern (C) int main(int argc, char** argv) {
                 auto cp = collectedPathInto(h[0 .. hl], collected[]);
                 if (laye() !is null && cp > 0 && !watchAt(laye(), collected[0 .. cp], &heldSession))
                     fputs("mycelia: the watch at laye did not start; what is collected is asked for every five minutes\n", stderr);
+            }
+            {
+                // What ag was paired with before this mycelia started, held again.
+                import mycelia : restoreSecrets, pairedCount;
+                import core.stdc.stdio : fprintf;
+                __gshared ubyte[64 * 16] kept = void;
+                int n = 0;
+                auto took = touch_take_paired(kept.ptr, cast(int) kept.length, &n);
+                if (took == 0) restoreSecrets((cast(const(char)*) kept.ptr)[0 .. n]);
+                fprintf(stderr, "mycelia: %d pairings held again from the Keychain: OSStatus %d %.*s\n",
+                    cast(int) pairedCount, took, cast(int) saidOf(took).length, saidOf(took).ptr);
             }
             return myceliaMain(h[0 .. hl], &press, &door, &pair, &collects);
     }
