@@ -231,3 +231,11 @@ static assert(layePressUrlInto("https://l.sbvh.nl", "/api/collected", new char[2
     "listing is no press");
 static assert(layePressUrlInto("https://l.sbvh.nl", "/auth/admit", new char[256]) == 0,
     "only what a person does with what is collected is made at laye");
+
+// "like, ag is just spores"
+// ag names its session as Claude Code writes its id, and nothing else reaches a key.
+import mycelia : aSession;
+static assert(aSession("ca78ba0e-1232-4704-b194-8497a934f9d3"));
+static assert(!aSession(""));
+static assert(!aSession("../../.ssh/id_ed25519"));
+static assert(!aSession("CA78BA0E"));

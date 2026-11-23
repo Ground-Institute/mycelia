@@ -638,6 +638,61 @@ private size_t wholeOf(const(char)[] got) {
     return 0;
 }
 
+// "what do you think of the idea to move ag to mycelia?"
+// "so its like a mushroom that pop's up, and that is ag in a sense."
+// "like, ag is just spores"
+//
+// What ag draws, asked of mycelia by ag itself, paired with the person's
+// finger: the session's own DID, from the key ground keeps for it, and what
+// mycelia keeps of laye's collections, whole, for ag to sort.
+enum AG_COLLECTED = "/collected";
+
+// The session id ag names, as Claude Code writes one: hex and dashes.
+bool aSession(const(char)[] id) {
+    if (id.length == 0 || id.length > 64) return false;
+    foreach (c; id)
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || c == '-')) return false;
+    return true;
+}
+
+// The whole answer to ag: "200", the session's DID, and the kept file, a
+// line each; or "0" and why not.
+private size_t agCollectedInto(const(char)[] home, const(char)[] body_, char[] dest) {
+    import core.sys.posix.fcntl : open, O_RDONLY;
+    import core.sys.posix.unistd : read, close;
+    import json : jsonString;
+    import signed : keptKey, putDID;
+    size_t o = 0;
+    void put(const(char)[] t) { foreach (c; t) if (o < dest.length) dest[o++] = c; }
+    auto session = jsonString(body_, "session");
+    if (!aSession(session)) { put("0\nag names its session, as Claude Code writes its id"); return o; }
+    char[1024] keyPath = 0;
+    size_t k = 0;
+    foreach (part; [home, "/.qntx/sessions/", session, "/key"])
+        foreach (c; part) if (k + 1 < keyPath.length) keyPath[k++] = c;
+    auto key = keptKey(keyPath.ptr);
+    if (!key.held) { put("0\nground keeps no key for this session"); return o; }
+    ZBuf did;
+    putDID(did, key.public_[]);
+    char[512] kept = 0;
+    auto cp = collectedPathInto(home, kept[]);
+    put("200\n");
+    put(did.slice());
+    put("\n");
+    if (cp == 0) return o;
+    auto fd = open(kept.ptr, O_RDONLY);
+    if (fd < 0) return o;
+    scope (exit) close(fd);
+    while (o < dest.length) {
+        auto got = read(fd, &dest[o], dest.length - o);
+        if (got <= 0) break;
+        o += got;
+    }
+    return o;
+}
+
+__gshared const(char)[] agHome;
+
 // Waits up to seconds for presses, answering each as it comes. True when a
 // press was made in the person's session.
 private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pairs pairs) {
@@ -680,6 +735,19 @@ private bool waitPresses(int fd, int seconds, Presses presses, Doors doors, Pair
                 fprintf(stderr, "mycelia: a press on %.*s was refused: its secret (%d bytes) is none of the %d paired\n",
                     cast(int) req.path.length, req.path.ptr, cast(int) req.secret.length, cast(int) pairedCount);
                 reply.put("401\nthis is no click in ag paired with the person's finger");
+            } else if (req.path == AG_COLLECTED) {
+                // Answered whole here: what mycelia keeps is longer than a reply holds.
+                __gshared char[4 << 20] answer = void;
+                auto len = agCollectedInto(agHome, req.body_, answer[]);
+                __gshared ZBuf agHead;
+                agHead.reset();
+                agHead.put("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\nContent-Length: ");
+                agHead.putUint(len);
+                agHead.put("\r\n\r\n");
+                write(c, agHead.ptr(), agHead.len);
+                write(c, answer.ptr, len);
+                close(c);
+                continue;
             } else if (!pressAllowed(req.path)) {
                 reply.put("0\nmycelia makes in the person's session only what a person does with what is collected, and this asked for ");
                 reply.put(req.path);
@@ -724,6 +792,7 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
     import core.stdc.time : time;
     import probe : laye;
     auto fd = listenAt(home);
+    agHome = home;
     long collectedAt = 0;
     bool pressed = false;
     // "it needs to move to laye anyways"
