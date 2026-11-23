@@ -1,0 +1,11 @@
+{
+  "name": "mycelia",
+  "owner": { "name": "Ground-Institute" },
+  "plugins": [
+    {
+      "name": "ag",
+      "source": "./ag",
+      "description": "Above ground: what waits on the person, popping up in a session as mycelia holds it"
+    }
+  ]
+}
