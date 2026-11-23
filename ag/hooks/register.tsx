@@ -32,7 +32,7 @@ type Kept = {
   to: string
   did: string
   due: string
-  waiting: { id: string; from: string; says: string; at: string; from_did: string; reach?: object }[]
+  waiting: { id: string; from: string; says: string; at: string; from_did: string; reach?: object; admit?: object }[]
 }
 
 // A time laye keeps, in RFC3339, as this clock reads it: HH:MM.
@@ -45,19 +45,22 @@ function clockOf(at: string): string {
 // What is drawn for the session whose DID did is: what comes in for it, what
 // it said that waits elsewhere, and every approval, whoever's it is.
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
+// "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+// A key a node holds nothing for, to admit, is an approval as a reach line is.
 export function linesOf(did: string, all: Kept[]): Line[] {
+  const approval = (w: Kept['waiting'][number]) => !!(w.reach || w.admit)
   const lines: Line[] = []
   for (const one of all)
     if (one.did === did)
       for (const w of one.waiting)
-        if (!w.reach) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), who: w.from, says: w.says, id: w.id })
+        if (!approval(w)) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), who: w.from, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (w.from_did === did && !w.reach)
+      if (w.from_did === did && !approval(w))
         lines.push({ way: 'out', to: one.did, due: clockOf(one.due), who: one.to, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (w.reach) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), who: '', says: w.says, id: w.id })
+      if (approval(w)) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), who: '', says: w.says, id: w.id })
   return lines
 }
 

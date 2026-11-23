@@ -176,6 +176,27 @@ test('an approval is the thing itself: approve twice approves it, deny twice den
   await ui.unmount()
 })
 
+// "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+test('a key a node holds nothing for is an approval: approve twice admits it, by its own id', async ($, on) => {
+  const ran: string[][] = []
+  const asked: Asked[] = []
+  const answer = JSON.stringify({ collected: [
+    { to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
+      { id: 'k1', from: 'kapteyn', says: "admit ramen's key did:key:z6MkRamen on kapteyn, for ramen", at: at(9, 0),
+        from_did: 'did:key:z6MkK', admit: { peer: 'did:key:z6MkK', did: 'did:key:z6MkRamen', label: 'ramen' } },
+    ] },
+  ] })
+  engine(on, ran, answer, asked)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  expect((await ui.find({ in: 'lines', type: 'Text', text: /^admit ramen's key did:key:z6MkRamen on kapteyn, for ramen$/ }))?.props.bold).toBe(true)
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
+  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkRamen","id":"k1"}'])
+  await ui.unmount()
+})
+
 // "while its forking, you see it right there, at that moment, who to let keep the name, if you dont do anything, nothing happens, otherwise you click the other session, and it gets the name and is the active session at the same time."
 test('a session that branched from this one stands as a row, and a click gives it the name', async ($, on) => {
   const ran: string[][] = []
