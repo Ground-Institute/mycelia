@@ -62,9 +62,9 @@ test('each message goes to the Client as a line: when, which way, who, what is s
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', moving: {}, lines: [
-    { way: 'in', to: 'did:key:z6MkMe', due: '15:40', day: '11-14', who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
-    { way: 'out', to: 'did:key:z6MkOther', due: '16:00', day: '11-14', who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
+  expect(lines?.props.props).toEqual({ today: '11-14', moving: {}, lines: [
+    { way: 'in', to: 'did:key:z6MkMe', due: '15:40', day: '11-14', at: at(15, 40), who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
+    { way: 'out', to: 'did:key:z6MkOther', due: '16:00', day: '11-14', at: at(16, 0), who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
   ], forks: [], name: '', here: true })
   // Asked of mycelia, by the session's own id; ground is asked only for the forks.
   expect(asked).toContainEqual(['/collected', 'a'.repeat(64), '{"session":"sid"}'])
@@ -187,16 +187,18 @@ test('+- waits for the last press: the +- pressed is green or red a second, whit
   expect(await lit('+-', 1)).toEqual(['red', 'white'])
   expect(await lit('+-', 0)).toEqual([undefined, undefined])
   expect(await lit('16:35')).toEqual(['white', 'black'])
-  // - on the hours twice, past now (15:00): it is tomorrow's, and says so.
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: '14:35' }))?.text).toBe('11-15 14:35')
+  // "why wont i see 26, when i go two days into the future?"
+  // + on the hours a day and more on: a day not today says its day.
+  for (let i = 0; i < 24; i++) await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  expect((await ui.find({ in: 'lines', type: 'Text', text: '16:35' }))?.text).toBe('11-15 16:35')
+  for (let i = 0; i < 25; i++) await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  expect((await ui.find({ in: 'lines', type: 'Text', text: '17:35' }))?.text).toBe('11-16 17:35')
   await wait(19000)
   expect(holds().length).toBe(0)
   await wait(3000)
   expect(holds().length).toBe(1)
-  expect(holds()[0]?.[2]).toContain(':35:00Z"')
-  expect(await lit('14:35')).toEqual([undefined, undefined])
+  expect(holds()[0]?.[2]).toBe(`{"to":"did:key:z6MkMe","until":"${new Date(2026, 10, 16, 17, 35).toISOString().replace('.000Z', 'Z')}"}`)
+  expect(await lit('17:35')).toEqual([undefined, undefined])
   expect(await lit('+-', 0)).toEqual([undefined, undefined])
   await wait(60000)
   expect(holds().length).toBe(1)
@@ -222,7 +224,7 @@ test('a move outlives its Client: drawn anew, the time still stands moved and is
   expect([shown?.props.backgroundColor, shown?.props.color]).toEqual(['white', 'black'])
   await clock.advance(22000)
   expect(holds().length).toBe(1)
-  expect(holds()[0]?.[2]).toContain(':40:00Z"')
+  expect(holds()[0]?.[2]).toBe(`{"to":"did:key:z6MkMe","until":"${at(16, 40).replace('.000Z', 'Z')}"}`)
   await again.unmount()
 })
 
@@ -317,7 +319,7 @@ test('a session that branched from this one stands as a row, and a click gives i
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', moving: {}, lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
+  expect(lines?.props.props).toEqual({ today: '11-14', moving: {}, lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
   expect((await ui.find({ in: 'lines', type: 'Text', text: /stays with/ }))?.text).toBe('⑂ Mycelia stays with  ')
   expect((await ui.find({ in: 'lines', type: 'Text', text: /● this session/ }))?.props.bold).toBe(true)
   expect((await ui.find({ in: 'lines', type: 'Text', text: /○ mycelia on k/ }))?.text).toBe('   ○ mycelia on k')

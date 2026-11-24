@@ -8,6 +8,8 @@ export type Line = {
   due: string
   // The day it is due on this clock, MM-DD.
   day?: string
+  // When it is due, RFC3339: what +- moves.
+  at?: string
   who: string
   says: string
   id: string

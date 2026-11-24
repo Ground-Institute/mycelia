@@ -52,17 +52,14 @@ function dayOf(at: string): string {
   return `${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
 }
 
-// A line's due time, and its day.
-function dueOf(at: string): { due: string; day: string } {
-  return { due: clockOf(at), day: dayOf(at) }
+// A line's due time, its day, and the time itself.
+function dueOf(at: string): { due: string; day: string; at: string } {
+  return { due: clockOf(at), day: dayOf(at), at }
 }
 
-// What this clock reads now, HH:MM, today's MM-DD and tomorrow's: a time moved
-// by +- is held to the next time the clock reads it, tomorrow once now is past it.
-export function clockNow(at: Date): { now: string; today: string; tomorrow: string } {
-  const next = new Date(at)
-  next.setDate(next.getDate() + 1)
-  return { now: clockOf(at.toISOString()), today: dayOf(at.toISOString()), tomorrow: dayOf(next.toISOString()) }
+// Today on this clock, MM-DD: a time on another day says its day.
+export function clockNow(at: Date): { today: string } {
+  return { today: dayOf(at.toISOString()) }
 }
 
 // What is drawn for the session whose DID did is: what comes in for it, what
@@ -181,7 +178,8 @@ function askOf(d: Press): [string, Record<string, string>] {
   const body: Record<string, string> = { to: d.to }
   // One thing approved or denied by its own id.
   if ((d.act === 'cancel' || d.act === 'release') && d.id) body.id = d.id
-  if (d.act === 'hold' && d.until) body.until = untilOf(d.until)
+  // A time moved by +- is the whole time; HH:MM is the next time this clock reads it.
+  if (d.act === 'hold' && d.until) body.until = d.until.includes('T') ? d.until : untilOf(d.until)
   if (d.act === 'release' && d.says !== undefined) body.says = d.says
   return [`/api/collected/${d.act}`, body]
 }

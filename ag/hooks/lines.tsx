@@ -10,17 +10,16 @@ import type { Fork, Line } from '../types'
 
 // The sessions that branched from this one stand above the messages, a row
 // each; a click on one gives it this session's name (ground forks give).
-// now, today and tomorrow are this clock's HH:MM, MM-DD and tomorrow's MM-DD:
-// what tells a day that is not today.
+// today is this clock's MM-DD: what tells a day that is not today.
 // moving is each time moved by +- that waits in ag's hooks to be held, by DID.
-export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; now?: string; today?: string; tomorrow?: string; moving?: Record<string, string> }
+export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; today?: string; moving?: Record<string, string> }
 
 type State = {
   open?: number // the message clicked in
   armed?: number // the message whose arrow was pressed once: XXXX
   deleting?: boolean // [delete] pressed once on the message clicked in: [DELETE]
   releasing?: boolean // [now] pressed once on the message clicked in: [NOW]
-  due?: string // the time it is held to, as moved by +-, before it is asked
+  due?: string // the time it is held to, RFC3339, as moved by +-, before it is asked
   moving?: Moving // the +- presses not yet asked of the node
   approving?: number // the approval whose [approve] was pressed once: [APPROVE]
   denying?: number // the approval whose [deny] was pressed once: [DENY]
@@ -39,11 +38,17 @@ const UNDER = 2
 // How wide the arrow is on a message line; it stands after the time drawn.
 const ARROW_WIDE = 4
 
-// The time moved by minutes, around the clock.
-function moved(due: string, minutes: number): string {
-  const [h, m] = due.split(':').map(Number)
-  const all = (((h ?? 0) * 60 + (m ?? 0) + minutes) % 1440 + 1440) % 1440
-  return `${String(Math.floor(all / 60)).padStart(2, '0')}:${String(all % 60).padStart(2, '0')}`
+// "why wont i see 26, when i go two days into the future?"
+// The time moved by minutes, RFC3339 in and out: days on, never around the clock.
+function moved(at: string, minutes: number): string {
+  return new Date(Date.parse(at) + minutes * 60000).toISOString().replace('.000Z', 'Z')
+}
+
+// A time as this clock reads it: its HH:MM, and its MM-DD.
+function readOf(at: string): { clock: string; day: string } {
+  const t = new Date(at)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return { clock: `${two(t.getHours())}:${two(t.getMinutes())}`, day: `${two(t.getMonth() + 1)}-${two(t.getDate())}` }
 }
 
 // Each row of the region: the message clicked in has its buttons above it.
@@ -62,8 +67,8 @@ function rowsOf(lines: Line[], open?: number): Row[] {
 function shownOf(state: State, at: number, line: Line, props: Lines): string {
   const due = (state.open === at && state.due) || props.moving?.[line.to]
   if (due) {
-    const tomorrow = props.now !== undefined && due <= props.now && props.tomorrow
-    return tomorrow ? `${props.tomorrow} ${due}` : due
+    const { clock, day } = readOf(due)
+    return day !== props.today ? `${day} ${clock}` : clock
   }
   return line.day && line.day !== props.today ? `${line.day} ${line.due}` : line.due
 }
@@ -140,7 +145,9 @@ function onApproval(state: State, at: number, x: number, line: Line): Pressed {
 function onButtons(state: State, x: number, line: Line, lines: Line[], waiting?: string): Pressed {
   const nudge = NUDGE[x]
   if (nudge !== undefined) {
-    const until = moved(state.due ?? waiting ?? line.due, nudge)
+    const from = state.due ?? waiting ?? line.at
+    if (!from) return { next: state }
+    const until = moved(from, nudge)
     return { post: { act: 'moving', to: line.to, until }, next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0, pair: x < 3 ? 0 : 1 } } }
   }
   if (x >= AT.now && x < AT.now + 5) {
