@@ -10,7 +10,9 @@ import type { Fork, Line } from '../types'
 
 // The sessions that branched from this one stand above the messages, a row
 // each; a click on one gives it this session's name (ground forks give).
-export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean }
+// now, today and tomorrow are this clock's HH:MM, MM-DD and tomorrow's MM-DD:
+// what tells a day that is not today.
+export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; now?: string; today?: string; tomorrow?: string }
 
 type State = {
   open?: number // the message clicked in
@@ -33,8 +35,7 @@ type Row = { line: number; buttons: boolean }
 
 // How far the message line stands in under its buttons.
 const UNDER = 2
-// Where the arrow stands on a message line at rest, and how wide it is.
-const ARROW = 6
+// How wide the arrow is on a message line; it stands after the time drawn.
 const ARROW_WIDE = 4
 
 // The time moved by minutes, around the clock.
@@ -54,11 +55,23 @@ function rowsOf(lines: Line[], open?: number): Row[] {
   return rows
 }
 
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+// The time drawn on a message's line, with its day when that is not today:
+// the node's, or the one moved by +-, held to tomorrow once now is past it.
+function shownOf(state: State, at: number, line: Line, props: Lines): string {
+  if (state.open === at && state.due) {
+    const tomorrow = props.now !== undefined && state.due <= props.now && props.tomorrow
+    return tomorrow ? `${props.tomorrow} ${state.due}` : state.due
+  }
+  return line.day && line.day !== props.today ? `${line.day} ${line.due}` : line.due
+}
+
 // A press on a message's own line: on its arrow, or anywhere else on it.
 // "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
-function onLine(state: State, at: number, x: number, line: Line): Pressed {
+function onLine(state: State, at: number, x: number, line: Line, shown: string): Pressed {
   const left = state.open === at ? UNDER : 0
-  if (x >= left + ARROW && x < left + ARROW + ARROW_WIDE) {
+  const arrow = left + shown.length + 1
+  if (x >= arrow && x < arrow + ARROW_WIDE) {
     if (state.armed === at) return { post: { act: 'cancel', to: line.to, id: line.id }, next: {} }
     return { next: { ...state, armed: at } }
   }
@@ -82,7 +95,8 @@ const NUDGE: Record<number, number> = { 0: 60, 1: -60, 3: 5, 4: -5 }
 // A +- press moves the time here and asks nothing yet: the time flashes for
 // a second, then waits thirty, and only then is the hold asked of the node.
 // Each press starts the wait over. Counted in ticks of TICK_MS.
-type Moving = { to: string; left: number; up: boolean }
+// pair is the +- pressed: 0 the hours, 1 the minutes.
+type Moving = { to: string; left: number; up: boolean; pair: number }
 const TICK_MS = 100
 const FLASH = 10
 const WAIT = 300
@@ -125,7 +139,7 @@ function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed 
   const nudge = NUDGE[x]
   if (nudge !== undefined) {
     const until = moved(state.due ?? line.due, nudge)
-    return { next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0 } } }
+    return { next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0, pair: x < 3 ? 0 : 1 } } }
   }
   if (x >= AT.now && x < AT.now + 5) {
     if (state.releasing) return { post: { act: 'release', to: line.to }, next: {} }
@@ -209,7 +223,7 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
       apply(onApproval(state, row.line, e.x, line))
       return
     }
-    apply(row.buttons ? onButtons(state, e.x, line, props.lines) : onLine(state, row.line, e.x, line))
+    apply(row.buttons ? onButtons(state, e.x, line, props.lines) : onLine(state, row.line, e.x, line, shownOf(state, row.line, line, props)))
   })
 
   surface.onKey((e: ClientKeyEvent) => {
@@ -218,9 +232,21 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     apply(line ? onKey(state, e.key, line) : { next: {} })
   })
 
+  // "its the +- its bg that was supposed to change color"
+  // The +- pressed flashes green up or red down for a second, then stands
+  // white for the wait.
+  const moving = state.moving
+  const pairOf = (pair: number) => {
+    if (!moving || moving.pair !== pair) return {}
+    if (moving.left > WAIT) return { backgroundColor: moving.up ? 'green' : 'red', color: 'white' }
+    return { backgroundColor: 'white', color: 'black' }
+  }
   const buttonsOf = (at: number) => (
     <Box key={`b${at}`} flexDirection="row">
-      <Text>{'+- +- '}</Text>
+      <Text {...pairOf(0)}>{'+-'}</Text>
+      <Text>{' '}</Text>
+      <Text {...pairOf(1)}>{'+-'}</Text>
+      <Text>{' '}</Text>
       <Text color={state.releasing ? 'green' : undefined} bold={!!state.releasing}>{nowOf(!!state.releasing)}</Text>
       <Text>{' '.repeat(AT.edit - AT.now - 5) + '[edit]' + ' '.repeat(AT.delete - AT.edit - 6)}</Text>
       <Text color={state.deleting ? 'red' : undefined} bold={!!state.deleting}>{deleteOf(!!state.deleting)}</Text>
@@ -248,16 +274,13 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     const open = state.open === at
     const editing = open && state.typing !== undefined
     const armed = state.armed === at
-    const moving = open ? state.moving : undefined
-    const flashing = moving !== undefined && moving.left > WAIT
-    const lit = moving === undefined ? {} : flashing
-      ? { backgroundColor: moving.up ? 'green' : 'red', color: 'white' }
-      : { backgroundColor: 'white', color: 'black' }
+    // "but the invert on the time, you may keep"
+    const lit = open && state.moving ? { backgroundColor: 'white', color: 'black' } : {}
     return (
       <Box key={`l${at}`} flexDirection="row">
         <Box flexShrink={0} flexDirection="row">
           {open ? <Text>{' '.repeat(UNDER)}</Text> : null}
-          <Text {...lit}>{open && state.due ? state.due : line.due}</Text>
+          <Text {...lit}>{shownOf(state, at, line, props)}</Text>
           <Text> </Text>
           <Text color={armed ? 'red' : undefined}>{armed ? 'XXXX' : line.way === 'in' ? '<-- ' : '--> '}</Text>
           <Text bold>{line.who}</Text>

@@ -6,6 +6,8 @@ export type Line = {
   way: 'in' | 'out' | 'approve'
   to: string
   due: string
+  // The day it is due on this clock, MM-DD.
+  day?: string
   who: string
   says: string
   id: string

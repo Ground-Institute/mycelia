@@ -15,6 +15,8 @@ const KEPT = JSON.stringify({ collected: [
   ] },
 ] })
 const ANSWER = KEPT
+// This clock while the tests run: the day of what is kept, at 15:00.
+const NOW = new Date(2026, 10, 14, 15, 0).getTime()
 
 const BAND = {
   plugin: 'ag',
@@ -27,7 +29,7 @@ const BAND = {
 // mycelia that pairs once and does every press.
 type Asked = [string, string, string]
 function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT) {
-  on('clock.now', () => ({ value: 0 }))
+  on('clock.now', () => ({ value: NOW }))
   on('fs.write', () => ({ value: {} }))
   on('http.fetch', (_, e) => {
     const path = e.url.replace('http://mycelia', '')
@@ -59,9 +61,9 @@ test('each message goes to the Client as a line: when, which way, who, what is s
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ lines: [
-    { way: 'in', to: 'did:key:z6MkMe', due: '15:40', who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
-    { way: 'out', to: 'did:key:z6MkOther', due: '16:00', who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
+  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', lines: [
+    { way: 'in', to: 'did:key:z6MkMe', due: '15:40', day: '11-14', who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
+    { way: 'out', to: 'did:key:z6MkOther', due: '16:00', day: '11-14', who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
   ], forks: [], name: '', here: true })
   // Asked of mycelia, by the session's own id; ground is asked only for the forks.
   expect(asked).toContainEqual(['/collected', 'a'.repeat(64), '{"session":"sid"}'])
@@ -148,36 +150,47 @@ test('now is pressed twice: once it is [NOW] green, and the second releases', as
 
 // "bg red when minus, bg green when plus, for like a sec, and then for a full 30 sec, it stays bg white with text black"
 // "another click resets timer, timer finishes means, you commit to this new time"
-test('+- waits for the last press: a second of green or red, thirty of white, then the hold is asked once', async ($, on) => {
+// "its the +- its bg that was supposed to change color, but the invert on the time, you may keep"
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+test('+- waits for the last press: the +- pressed is green or red a second, white thirty, then the hold is asked once', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
   engine(on, ran, ANSWER, asked)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
+  const lit = async (text: string, nth = 0) => {
+    const t = (await ui.findAll({ in: 'lines', type: 'Text', text }))[nth]
+    return [t?.props.backgroundColor, t?.props.color]
+  }
 
   await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
-  // + on the hours: green, white text, and nothing asked.
+  // + on the hours: that +- green, the time inverted, nothing asked.
   await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
-  const up = await ui.find({ in: 'lines', type: 'Text', text: '16:40' })
-  expect([up?.props.backgroundColor, up?.props.color]).toEqual(['green', 'white'])
+  expect(await lit('+-', 0)).toEqual(['green', 'white'])
+  expect(await lit('+-', 1)).toEqual([undefined, undefined])
+  expect(await lit('16:40')).toEqual(['white', 'black'])
   expect(holds().length).toBe(0)
-  // A second on, it waits white with black text.
+  // A second on, that +- waits white with black text.
   await ui.advance(1000)
-  const waiting = await ui.find({ in: 'lines', type: 'Text', text: '16:40' })
-  expect([waiting?.props.backgroundColor, waiting?.props.color]).toEqual(['white', 'black'])
-  // - on the minutes twenty seconds in: red, and the wait starts over.
+  expect(await lit('+-', 0)).toEqual(['white', 'black'])
+  // - on the minutes twenty seconds in: that +- red, and the wait starts over.
   await ui.advance(20000)
   await ui.pointer({ type: 'down', x: 4, y: 0, button: 'left' })
-  const down = await ui.find({ in: 'lines', type: 'Text', text: '16:35' })
-  expect([down?.props.backgroundColor, down?.props.color]).toEqual(['red', 'white'])
+  expect(await lit('+-', 1)).toEqual(['red', 'white'])
+  expect(await lit('+-', 0)).toEqual([undefined, undefined])
+  expect(await lit('16:35')).toEqual(['white', 'black'])
+  // - on the hours twice, past now (15:00): it is tomorrow's, and says so.
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
+  expect((await ui.find({ in: 'lines', type: 'Text', text: '14:35' }))?.text).toBe('11-15 14:35')
   await ui.advance(30000)
   expect(holds().length).toBe(0)
   await ui.advance(1100)
   expect(holds().length).toBe(1)
   expect(holds()[0]?.[2]).toContain(':35:00Z"')
-  const held = await ui.find({ in: 'lines', type: 'Text', text: '16:35' })
-  expect(held?.props.backgroundColor).toBeUndefined()
+  expect(await lit('14:35')).toEqual([undefined, undefined])
+  expect(await lit('+-', 0)).toEqual([undefined, undefined])
   await ui.advance(60000)
   expect(holds().length).toBe(1)
   await ui.unmount()
@@ -257,7 +270,7 @@ test('a session that branched from this one stands as a row, and a click gives i
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
+  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
   expect((await ui.find({ in: 'lines', type: 'Text', text: /stays with/ }))?.text).toBe('⑂ Mycelia stays with  ')
   expect((await ui.find({ in: 'lines', type: 'Text', text: /● this session/ }))?.props.bold).toBe(true)
   expect((await ui.find({ in: 'lines', type: 'Text', text: /○ mycelia on k/ }))?.text).toBe('   ○ mycelia on k')
