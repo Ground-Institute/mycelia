@@ -18,6 +18,7 @@ type State = {
   deleting?: boolean // [delete] pressed once on the message clicked in: [DELETE]
   releasing?: boolean // [now] pressed once on the message clicked in: [NOW]
   due?: string // the time it is held to, as moved by +-, before it is asked
+  moving?: Moving // the +- presses not yet asked of the node
   approving?: number // the approval whose [approve] was pressed once: [APPROVE]
   denying?: number // the approval whose [deny] was pressed once: [DENY]
   typing?: string // what is typed in place of what is said, while editing
@@ -76,6 +77,28 @@ const deleteOf = (deleting: boolean) => (deleting ? '[DELETE]' : '[delete]')
 // The +- pairs: hours first, then minutes, each up then down.
 const NUDGE: Record<number, number> = { 0: 60, 1: -60, 3: 5, 4: -5 }
 
+// "bg red when minus, bg green when plus, for like a sec, and then for a full 30 sec, it stays bg white with text black"
+// "another click resets timer, timer finishes means, you commit to this new time"
+// A +- press moves the time here and asks nothing yet: the time flashes for
+// a second, then waits thirty, and only then is the hold asked of the node.
+// Each press starts the wait over. Counted in ticks of TICK_MS.
+type Moving = { to: string; left: number; up: boolean }
+const TICK_MS = 100
+const FLASH = 10
+const WAIT = 300
+
+// One tick of the wait: the next state, and the hold to ask once it ran out.
+function ticked(state: State): Pressed {
+  const moving = state.moving
+  if (!moving) return { next: state }
+  if (moving.left > 1) return { next: { ...state, moving: { ...moving, left: moving.left - 1 } } }
+  const { moving: _, ...rest } = state
+  return { post: { act: 'hold', to: moving.to, until: state.due ?? '' }, next: rest }
+}
+
+// The Clients whose wait is ticking: one clock each, started once.
+const ticking = new WeakSet<object>()
+
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 // "AND WITHOUT CHANCE FOR USER ERROR"
 // An approval is the thing itself, with its two presses on its own line,
@@ -102,7 +125,7 @@ function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed 
   const nudge = NUDGE[x]
   if (nudge !== undefined) {
     const until = moved(state.due ?? line.due, nudge)
-    return { post: { act: 'hold', to: line.to, until }, next: { ...state, due: until } }
+    return { next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0 } } }
   }
   if (x >= AT.now && x < AT.now + 5) {
     if (state.releasing) return { post: { act: 'release', to: line.to }, next: {} }
@@ -154,6 +177,13 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
   const apply = (pressed: Pressed) => {
     if (pressed.post) surface.post(pressed.post)
     surface.setState(pressed.next)
+  }
+  if (!ticking.has(surface)) {
+    ticking.add(surface)
+    surface.every(TICK_MS, () => {
+      const now = surface.state
+      if (now?.moving) apply(ticked(now))
+    })
   }
 
   surface.onPointer((e: ClientPointerEvent) => {
@@ -218,11 +248,16 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     const open = state.open === at
     const editing = open && state.typing !== undefined
     const armed = state.armed === at
+    const moving = open ? state.moving : undefined
+    const flashing = moving !== undefined && moving.left > WAIT
+    const lit = moving === undefined ? {} : flashing
+      ? { backgroundColor: moving.up ? 'green' : 'red', color: 'white' }
+      : { backgroundColor: 'white', color: 'black' }
     return (
       <Box key={`l${at}`} flexDirection="row">
         <Box flexShrink={0} flexDirection="row">
           {open ? <Text>{' '.repeat(UNDER)}</Text> : null}
-          <Text>{open && state.due ? state.due : line.due}</Text>
+          <Text {...lit}>{open && state.due ? state.due : line.due}</Text>
           <Text> </Text>
           <Text color={armed ? 'red' : undefined}>{armed ? 'XXXX' : line.way === 'in' ? '<-- ' : '--> '}</Text>
           <Text bold>{line.who}</Text>

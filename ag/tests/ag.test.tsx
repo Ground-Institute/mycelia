@@ -146,6 +146,43 @@ test('now is pressed twice: once it is [NOW] green, and the second releases', as
   await ui.unmount()
 })
 
+// "bg red when minus, bg green when plus, for like a sec, and then for a full 30 sec, it stays bg white with text black"
+// "another click resets timer, timer finishes means, you commit to this new time"
+test('+- waits for the last press: a second of green or red, thirty of white, then the hold is asked once', async ($, on) => {
+  const ran: string[][] = []
+  const asked: Asked[] = []
+  engine(on, ran, ANSWER, asked)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
+
+  await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
+  // + on the hours: green, white text, and nothing asked.
+  await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  const up = await ui.find({ in: 'lines', type: 'Text', text: '16:40' })
+  expect([up?.props.backgroundColor, up?.props.color]).toEqual(['green', 'white'])
+  expect(holds().length).toBe(0)
+  // A second on, it waits white with black text.
+  await ui.advance(1000)
+  const waiting = await ui.find({ in: 'lines', type: 'Text', text: '16:40' })
+  expect([waiting?.props.backgroundColor, waiting?.props.color]).toEqual(['white', 'black'])
+  // - on the minutes twenty seconds in: red, and the wait starts over.
+  await ui.advance(20000)
+  await ui.pointer({ type: 'down', x: 4, y: 0, button: 'left' })
+  const down = await ui.find({ in: 'lines', type: 'Text', text: '16:35' })
+  expect([down?.props.backgroundColor, down?.props.color]).toEqual(['red', 'white'])
+  await ui.advance(30000)
+  expect(holds().length).toBe(0)
+  await ui.advance(1100)
+  expect(holds().length).toBe(1)
+  expect(holds()[0]?.[2]).toContain(':35:00Z"')
+  const held = await ui.find({ in: 'lines', type: 'Text', text: '16:35' })
+  expect(held?.props.backgroundColor).toBeUndefined()
+  await ui.advance(60000)
+  expect(holds().length).toBe(1)
+  await ui.unmount()
+})
+
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 // "AND WITHOUT CHANCE FOR USER ERROR"
 test('an approval is the thing itself: approve twice approves it, deny twice denies it, by its own id', async ($, on) => {
