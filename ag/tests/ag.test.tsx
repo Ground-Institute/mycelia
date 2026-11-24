@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 // A time on this clock, as laye keeps it: RFC3339.
 const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
@@ -28,8 +28,8 @@ const BAND = {
 // What mycelia was asked over its socket, as [path, secret, body]; a fake
 // mycelia that pairs once and does every press.
 type Asked = [string, string, string]
-function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT) {
-  on('clock.now', () => ({ value: NOW }))
+function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT, clocked = false) {
+  if (!clocked) on('clock.now', () => ({ value: NOW }))
   on('fs.write', () => ({ value: {} }))
   on('http.fetch', (_, e) => {
     const path = e.url.replace('http://mycelia', '')
@@ -42,11 +42,12 @@ function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], 
   })
 }
 
-function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], answer = ANSWER, asked: Asked[] = []) {
-  mycelia(on, asked, answer)
+// clocked: the test answers $.clock itself, with mock.clock.
+function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], answer = ANSWER, asked: Asked[] = [], clocked = false) {
+  mycelia(on, asked, answer, clocked)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
-  on('clock.every', () => ({ value: {} }))
+  if (!clocked) on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => {
     ran.push([...e.argv])
     return { value: { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' } }
@@ -61,7 +62,7 @@ test('each message goes to the Client as a line: when, which way, who, what is s
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', lines: [
+  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', moving: {}, lines: [
     { way: 'in', to: 'did:key:z6MkMe', due: '15:40', day: '11-14', who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
     { way: 'out', to: 'did:key:z6MkOther', due: '16:00', day: '11-14', who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
   ], forks: [], name: '', here: true })
@@ -152,16 +153,22 @@ test('now is pressed twice: once it is [NOW] green, and the second releases', as
 // "another click resets timer, timer finishes means, you commit to this new time"
 // "its the +- its bg that was supposed to change color, but the invert on the time, you may keep"
 // "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
-test('+- waits for the last press: the +- pressed is green or red a second, white thirty, then the hold is asked once', async ($, on) => {
+// "decrease the wait to 20s"
+test('+- waits for the last press: the +- pressed is green or red a second, white twenty, then the hold is asked once', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
-  engine(on, ran, ANSWER, asked)
+  engine(on, ran, ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
   const lit = async (text: string, nth = 0) => {
     const t = (await ui.findAll({ in: 'lines', type: 'Text', text }))[nth]
     return [t?.props.backgroundColor, t?.props.color]
+  }
+  const wait = async (ms: number) => {
+    await ui.advance(ms)
+    await clock.advance(ms)
   }
 
   await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
@@ -172,10 +179,10 @@ test('+- waits for the last press: the +- pressed is green or red a second, whit
   expect(await lit('16:40')).toEqual(['white', 'black'])
   expect(holds().length).toBe(0)
   // A second on, that +- waits white with black text.
-  await ui.advance(1000)
+  await wait(1000)
   expect(await lit('+-', 0)).toEqual(['white', 'black'])
-  // - on the minutes twenty seconds in: that +- red, and the wait starts over.
-  await ui.advance(20000)
+  // - on the minutes fifteen seconds in: that +- red, and the wait starts over.
+  await wait(15000)
   await ui.pointer({ type: 'down', x: 4, y: 0, button: 'left' })
   expect(await lit('+-', 1)).toEqual(['red', 'white'])
   expect(await lit('+-', 0)).toEqual([undefined, undefined])
@@ -184,15 +191,55 @@ test('+- waits for the last press: the +- pressed is green or red a second, whit
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
   expect((await ui.find({ in: 'lines', type: 'Text', text: '14:35' }))?.text).toBe('11-15 14:35')
-  await ui.advance(30000)
+  await wait(19000)
   expect(holds().length).toBe(0)
-  await ui.advance(1100)
+  await wait(3000)
   expect(holds().length).toBe(1)
   expect(holds()[0]?.[2]).toContain(':35:00Z"')
   expect(await lit('14:35')).toEqual([undefined, undefined])
   expect(await lit('+-', 0)).toEqual([undefined, undefined])
-  await ui.advance(60000)
+  await wait(60000)
   expect(holds().length).toBe(1)
+  await ui.unmount()
+})
+
+// "yeah, i dont think it want's to move beyond 20:00"
+test('a move outlives its Client: drawn anew, the time still stands moved and is held', async ($, on) => {
+  const ran: string[][] = []
+  const asked: Asked[] = []
+  engine(on, ran, ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
+
+  const first = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await first.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
+  await first.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  await first.unmount()
+
+  const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const shown = await again.find({ in: 'lines', type: 'Text', text: '16:40' })
+  expect([shown?.props.backgroundColor, shown?.props.color]).toEqual(['white', 'black'])
+  await clock.advance(22000)
+  expect(holds().length).toBe(1)
+  expect(holds()[0]?.[2]).toContain(':40:00Z"')
+  await again.unmount()
+})
+
+test('esc leaves a moved time where it was: nothing is held', async ($, on) => {
+  const ran: string[][] = []
+  const asked: Asked[] = []
+  engine(on, ran, ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
+  await ui.pointer({ type: 'down', x: 0, y: 0, button: 'left' })
+  await ui.pointer({ type: 'down', x: 50, y: 0, button: 'left' })
+  await clock.advance(60000)
+  expect(asked.some(a => a[0] === '/api/collected/hold')).toBe(false)
+  expect((await ui.find({ in: 'lines', type: 'Text', text: '15:40' }))?.props.backgroundColor).toBeUndefined()
   await ui.unmount()
 })
 
@@ -270,7 +317,7 @@ test('a session that branched from this one stands as a row, and a click gives i
   const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
   const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
+  expect(lines?.props.props).toEqual({ now: '15:00', today: '11-14', tomorrow: '11-15', moving: {}, lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
   expect((await ui.find({ in: 'lines', type: 'Text', text: /stays with/ }))?.text).toBe('⑂ Mycelia stays with  ')
   expect((await ui.find({ in: 'lines', type: 'Text', text: /● this session/ }))?.props.bold).toBe(true)
   expect((await ui.find({ in: 'lines', type: 'Text', text: /○ mycelia on k/ }))?.text).toBe('   ○ mycelia on k')

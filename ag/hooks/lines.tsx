@@ -12,7 +12,8 @@ import type { Fork, Line } from '../types'
 // each; a click on one gives it this session's name (ground forks give).
 // now, today and tomorrow are this clock's HH:MM, MM-DD and tomorrow's MM-DD:
 // what tells a day that is not today.
-export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; now?: string; today?: string; tomorrow?: string }
+// moving is each time moved by +- that waits in ag's hooks to be held, by DID.
+export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; now?: string; today?: string; tomorrow?: string; moving?: Record<string, string> }
 
 type State = {
   open?: number // the message clicked in
@@ -59,9 +60,10 @@ function rowsOf(lines: Line[], open?: number): Row[] {
 // The time drawn on a message's line, with its day when that is not today:
 // the node's, or the one moved by +-, held to tomorrow once now is past it.
 function shownOf(state: State, at: number, line: Line, props: Lines): string {
-  if (state.open === at && state.due) {
-    const tomorrow = props.now !== undefined && state.due <= props.now && props.tomorrow
-    return tomorrow ? `${props.tomorrow} ${state.due}` : state.due
+  const due = (state.open === at && state.due) || props.moving?.[line.to]
+  if (due) {
+    const tomorrow = props.now !== undefined && due <= props.now && props.tomorrow
+    return tomorrow ? `${props.tomorrow} ${due}` : due
   }
   return line.day && line.day !== props.today ? `${line.day} ${line.due}` : line.due
 }
@@ -92,22 +94,22 @@ const NUDGE: Record<number, number> = { 0: 60, 1: -60, 3: 5, 4: -5 }
 
 // "bg red when minus, bg green when plus, for like a sec, and then for a full 30 sec, it stays bg white with text black"
 // "another click resets timer, timer finishes means, you commit to this new time"
-// A +- press moves the time here and asks nothing yet: the time flashes for
-// a second, then waits thirty, and only then is the hold asked of the node.
-// Each press starts the wait over. Counted in ticks of TICK_MS.
+// A +- press moves the time and tells ag's hooks, which ask the node to hold
+// it twenty-one seconds after the last press. Here the +- pressed flashes for
+// a second, then stands white for the wait. Counted in ticks of TICK_MS.
 // pair is the +- pressed: 0 the hours, 1 the minutes.
 type Moving = { to: string; left: number; up: boolean; pair: number }
 const TICK_MS = 100
 const FLASH = 10
-const WAIT = 300
+const WAIT = 200
 
-// One tick of the wait: the next state, and the hold to ask once it ran out.
+// One tick of the wait as drawn.
 function ticked(state: State): Pressed {
   const moving = state.moving
   if (!moving) return { next: state }
   if (moving.left > 1) return { next: { ...state, moving: { ...moving, left: moving.left - 1 } } }
   const { moving: _, ...rest } = state
-  return { post: { act: 'hold', to: moving.to, until: state.due ?? '' }, next: rest }
+  return { next: rest }
 }
 
 // The Clients whose wait is ticking: one clock each, started once.
@@ -135,11 +137,11 @@ function onApproval(state: State, at: number, x: number, line: Line): Pressed {
 }
 
 // A press on the buttons of the message clicked in.
-function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed {
+function onButtons(state: State, x: number, line: Line, lines: Line[], waiting?: string): Pressed {
   const nudge = NUDGE[x]
   if (nudge !== undefined) {
-    const until = moved(state.due ?? line.due, nudge)
-    return { next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0, pair: x < 3 ? 0 : 1 } } }
+    const until = moved(state.due ?? waiting ?? line.due, nudge)
+    return { post: { act: 'moving', to: line.to, until }, next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0, pair: x < 3 ? 0 : 1 } } }
   }
   if (x >= AT.now && x < AT.now + 5) {
     if (state.releasing) return { post: { act: 'release', to: line.to }, next: {} }
@@ -155,7 +157,8 @@ function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed 
     return { next: { ...state, deleting: true, releasing: false } }
   }
   // "cancel should get us out of the clicked-in,"
-  if (x >= AT.esc && x < AT.esc + 5) return { next: {} }
+  // A time moved and not yet held stays where it was.
+  if (x >= AT.esc && x < AT.esc + 5) return waiting ? { post: { act: 'still', to: line.to }, next: {} } : { next: {} }
   return { next: state }
 }
 
@@ -194,6 +197,8 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
   }
   if (!ticking.has(surface)) {
     ticking.add(surface)
+    // Each Client drawn anew is told to ag's hooks, where it is written down.
+    surface.post({ act: 'mounted' })
     surface.every(TICK_MS, () => {
       const now = surface.state
       if (now?.moving) apply(ticked(now))
@@ -223,7 +228,7 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
       apply(onApproval(state, row.line, e.x, line))
       return
     }
-    apply(row.buttons ? onButtons(state, e.x, line, props.lines) : onLine(state, row.line, e.x, line, shownOf(state, row.line, line, props)))
+    apply(row.buttons ? onButtons(state, e.x, line, props.lines, props.moving?.[line.to]) : onLine(state, row.line, e.x, line, shownOf(state, row.line, line, props)))
   })
 
   surface.onKey((e: ClientKeyEvent) => {
@@ -275,7 +280,7 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     const editing = open && state.typing !== undefined
     const armed = state.armed === at
     // "but the invert on the time, you may keep"
-    const lit = open && state.moving ? { backgroundColor: 'white', color: 'black' } : {}
+    const lit = (open && state.moving) || props.moving?.[line.to] ? { backgroundColor: 'white', color: 'black' } : {}
     return (
       <Box key={`l${at}`} flexDirection="row">
         <Box flexShrink={0} flexDirection="row">

@@ -26,6 +26,6 @@ export type Forks = { name: string; here: boolean; forks: Fork[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    ag: { said: Said | null; refused: string | null; forks: Forks | null }
+    ag: { said: Said | null; refused: string | null; forks: Forks | null; moving: Record<string, string> | null }
   }
 }
