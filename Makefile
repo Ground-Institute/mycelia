@@ -21,7 +21,7 @@ else
 # "so, why would the part that asks the node, not be able to be its own tiny binary"
 # No druntime and no GC: ldc2 -betterC, the modules below and what they link.
 SOURCES = bin/mycelia.d mycelia.d etcd.d pushed.d tmux.d qntx.d statusline.d sql.d named.d probe.d json.d \
-          http.d zbuf.d token.d signed.d
+          http.d zbuf.d token.d signed.d unbroken.d
 LIBS = -L-lsqlite3 -L-lcurl -L-lsodium
 
 # "mycelia connect needs to also be a thing"
@@ -88,6 +88,8 @@ test:
 	$(TEST_OUT)/named-test
 	ldc2 -unittest -main -of=$(TEST_OUT)/signed-test -I=. signed.d signed_test.d zbuf.d token.d -L-lsodium
 	$(TEST_OUT)/signed-test
+	ldc2 -betterC -of=$(TEST_OUT)/unbroken-test -I=. unbroken.d unbroken_test.d
+	$(TEST_OUT)/unbroken-test
 
 # The app lives under PREFIX/lib, and ~/.local/bin/mycelia points into it,
 # which is what launchd and systemd run. Renamed into place, never copied over

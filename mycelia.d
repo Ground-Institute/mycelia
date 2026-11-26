@@ -574,12 +574,18 @@ private int listenAt(const(char)[] home) {
     foreach (c; SOCKET) path[o++] = c;
     path[o] = 0;
     unlink(&path[0]);
+    // How many askers wait while mycelia is asking the node: it answers them
+    // between its passes, and with room for 4 the fifth was refused. Every
+    // session's ag asks every five seconds, and a pass takes as long as the
+    // node does (2026-11-26: 35 of 100 refused while the node's row waited on
+    // a peer that did not answer).
+    enum WAITING = 128;
     auto fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     sockaddr_un at;
     at.sun_family = AF_UNIX;
     foreach (i; 0 .. o + 1) at.sun_path[i] = cast(byte) path[i];
-    if (bind(fd, cast(sockaddr*) &at, cast(uint) sockaddr_un.sizeof) != 0 || chmod(&path[0], 384) != 0 || listen(fd, 4) != 0) {
+    if (bind(fd, cast(sockaddr*) &at, cast(uint) sockaddr_un.sizeof) != 0 || chmod(&path[0], 384) != 0 || listen(fd, WAITING) != 0) {
         close(fd);
         return -1;
     }
@@ -791,6 +797,11 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
                 Collects collects = null) {
     import core.stdc.time : time;
     import probe : laye;
+    // Before anything is answered: a client that goes does not end mycelia.
+    {
+        import unbroken : unbroken;
+        unbroken();
+    }
     auto fd = listenAt(home);
     agHome = home;
     long collectedAt = 0;
