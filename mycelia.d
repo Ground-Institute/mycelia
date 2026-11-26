@@ -598,11 +598,30 @@ private int listenAt(const(char)[] home) {
 // no finger again (laye PLAN.md P2P2A2A_A_004_06).
 __gshared char[64][16] paired;
 __gshared size_t pairedCount;
+// "keeps asking me for my finger over n over again"
+// When each was last presented, counted in presentations. With all sixteen
+// held, a new one took the first one's place every time, so each session
+// paired put out the one paired before it, which asked for a finger again
+// (2026-11-26: 24 pairings and "none of the 16 paired" six times in one log).
+__gshared ulong[16] pairedUsed;
+__gshared ulong pairedClock;
+
+// Where a new secret is kept: the next free place, or, with every place
+// held, the place of the one longest unpresented: a session that ended
+// presents nothing, and a live one presents itself every few seconds.
+size_t placeFor(size_t held, const(ulong)[] used) {
+    if (held < used.length) return held;
+    size_t at = 0;
+    foreach (i; 1 .. used.length) if (used[i] < used[at]) at = i;
+    return at;
+}
 
 void keepSecret(const(char)[] secret) {
     if (secret.length != 64) return;
-    auto at = pairedCount < paired.length ? pairedCount++ : 0;
+    auto at = placeFor(pairedCount, pairedUsed[]);
+    if (at == pairedCount) pairedCount++;
     foreach (i, c; secret) paired[at][i] = c;
+    pairedUsed[at] = ++pairedClock;
 }
 
 // Every secret held, one after another, as they are kept.
@@ -617,7 +636,10 @@ void restoreSecrets(const(char)[] kept) {
 
 bool heldSecret(const(char)[] secret) {
     if (secret.length != 64) return false;
-    foreach (i; 0 .. pairedCount) if (paired[i][] == secret) return true;
+    foreach (i; 0 .. pairedCount) if (paired[i][] == secret) {
+        pairedUsed[i] = ++pairedClock;
+        return true;
+    }
     return false;
 }
 

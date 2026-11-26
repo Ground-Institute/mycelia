@@ -185,6 +185,16 @@ static assert(requestOf("POST /pair HTTP/1.1\r\nHost: mycelia\r\n\r\n").secret.l
 static assert(!requestOf("/api/collected/cancel\n{}").http, "the old way of asking is no click");
 static assert(requestOf("POST /x HTTP/1.1\r\nx-ag-secret: lower\r\n\r\n").secret == "lower", "a header's name is any case");
 
+// "keeps asking me for my finger over n over again"
+// A new pairing takes the next free place; with every place held, the place
+// of the one longest unpresented, and never the first one's every time.
+import mycelia : placeFor;
+static assert(placeFor(0, [0UL, 0, 0]) == 0);
+static assert(placeFor(2, [1UL, 2, 0]) == 2, "a free place is taken first");
+static assert(placeFor(3, [5UL, 2, 9]) == 1, "then the one longest unpresented");
+static assert(placeFor(3, [5UL, 7, 6]) == 0);
+static assert(placeFor(3, [10UL, 7, 6]) == 2, "the first one's place is no more taken than another's");
+
 // "k is down because of it, we burnt through data budget"
 // The node's answer for what is collected was 2,662,310 bytes, asked every
 // five-second pass: about 1.9 GB an hour. It is asked once COLLECTED_EVERY,
