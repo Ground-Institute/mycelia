@@ -10,11 +10,9 @@ import type { Fork, Line, View } from '../types'
 // of pills, as the person knows it:
 //   +- +- [now]         [edit]              [delete] [esc]
 //     16:25 <-- Shiitake: Some text of Shiitake to us.
-// Drawn with the engine's own Button and Input, so nothing here places a
-// character or reads a click.
-
-// The engine's elements this draws with, as `$.ui.resolve(e)` gives them.
-type Table = { Box: any; Text: any; Button: any; Input: any }
+// What is drawn and what a press does are said here once, as rows of pieces:
+// ./band.tsx draws the pieces and finds the one pressed in the same rows, so
+// where a press lands is never written apart from what is drawn there.
 
 // What a press asks of the node: the act, on whom, and what it carries.
 // `collection` is the one acted on: without it the node acts on every one it holds for `to`.
@@ -95,194 +93,141 @@ function titleOf(pill: Pill, now: number): string {
   return `${whenOf(pill.at, now)}${pill.way === 'in' ? '<-' : '->'}[${pill.who}]`
 }
 
-export function pills(table: Table, given: Given) {
-  const { Box, Text, Button, Input } = table
+// One piece of a row: what it says, how it is worn, and the press it is.
+export type Piece = {
+  text: string
+  key?: string // pressed, this is what is done: Drawn.does[key]
+  color?: string
+  backgroundColor?: string
+  bold?: boolean
+  dim?: boolean
+  inverse?: boolean
+  rest?: boolean // what a message says: the rest of its row, each line of it a row of the screen
+}
+
+// A message being edited, in the engine's own field.
+export type Field = { key: string; label: string; value: string; rows: number; save: (says: string) => unknown }
+
+// What is drawn: the rows, what each press does, and the fields under them.
+export type Drawn = { rows: Piece[][]; does: Record<string, () => unknown>; fields: Field[] }
+
+export function pills(given: Given): Drawn {
   const { view, now, set, act } = given
   const armed = view.armed !== undefined && now - view.armed.at <= ARMED_FOR_MS ? view.armed.id : undefined
+  const rows: Piece[][] = []
+  const does: Record<string, () => unknown> = {}
+  const fields: Field[] = []
 
   // One press does it.
-  const once = (id: string, title: string, does: () => unknown) => (
-    <Button key={id} plain onPress={does}>
-      <Text>{`[${title}]`}</Text>
-    </Button>
-  )
+  const once = (key: string, text: string, did: () => unknown, worn: Partial<Piece> = {}): Piece => {
+    does[key] = did
+    return { text, key, ...worn }
+  }
 
   // "[now], this means to me kind fo same thing as [delete] two stage, press once, you get [NOW] green, and press another time, it actually get's released"
-  // The first press arms it, in capitals; the second does it.
-  const twice = (id: string, title: string, means: string, does: () => unknown) => (
-    <Button
-      key={id}
-      plain
-      onPress={async () => {
-        // Armed is asked of the clock at the press, not at the drawing.
-        const at = await given.clock()
-        const live = view.armed?.id === id && at - view.armed.at <= ARMED_FOR_MS
-        return live ? does() : set({ ...view, armed: { id, at } })
-      }}
-    >
-      <Text color={armed === id ? means : undefined} bold={armed === id}>
-        {armed === id ? `[${title.toUpperCase()}]` : `[${title}]`}
-      </Text>
-    </Button>
-  )
+  // The first press arms it; the second does it. Armed is asked of the clock
+  // at the press, not at the drawing.
+  const twice = (key: string, rested: string, armedText: string, means: string, did: () => unknown, bold = true): Piece => {
+    does[key] = async () => {
+      const at = await given.clock()
+      const live = view.armed?.id === key && at - view.armed.at <= ARMED_FOR_MS
+      return live ? did() : set({ ...view, armed: { id: key, at } })
+    }
+    return armed === key ? { text: armedText, key, color: means, bold } : { text: rested, key }
+  }
 
-  const gap = <Text> </Text>
-  const space = (n: number) => <Text>{' '.repeat(n)}</Text>
+  const gap = (n = 1): Piece => ({ text: ' '.repeat(n) })
   const all = pillsOf(given.lines)
 
   // "⑂ Mycelia stays with  ● this session   ○ mycelia on k"
-  const forksRow = () => {
+  // The name is on the filled one; a press on a hollow one moves it there.
+  if (given.forks.length > 0) {
     const holder = given.forks.find(f => f.holds)
-    return (
-      <Box key="forks" flexDirection="row">
-        <Text>{`⑂ ${given.name || 'the name'} stays with  `}</Text>
-        {given.here || !holder ? (
-          <Text bold={given.here} dimColor={!given.here}>{`${given.here ? '●' : '○'} this session`}</Text>
-        ) : (
-          <Button key="fork:here" plain onPress={() => given.named('take', holder.session)}>
-            <Text dimColor>○ this session</Text>
-          </Button>
-        )}
-        {given.forks.map(f => {
-          const label = `${f.holds ? '●' : '○'} ${f.title || f.name || f.session.slice(0, 8)}`
-          return f.holds || !given.here ? (
-            <Text key={`fork:${f.session}`} bold={f.holds} dimColor={!f.holds}>{`   ${label}`}</Text>
-          ) : (
-            <Box key={`forkrow:${f.session}`} flexDirection="row">
-              <Text>{'   '}</Text>
-              <Button key={`fork:${f.session}`} plain onPress={() => given.named(f.running ? 'open' : 'give', f.session)}>
-                <Text dimColor>{label}</Text>
-              </Button>
-            </Box>
-          )
-        })}
-      </Box>
-    )
+    const row: Piece[] = [{ text: `⑂ ${given.name || 'the name'} stays with  ` }]
+    const here = `${given.here ? '●' : '○'} this session`
+    row.push(given.here || !holder ? { text: here, bold: given.here, dim: !given.here } : once('fork:here', here, () => given.named('take', holder.session), { dim: true }))
+    for (const f of given.forks) {
+      const label = `${f.holds ? '●' : '○'} ${f.title || f.name || f.session.slice(0, 8)}`
+      row.push(gap(3))
+      row.push(f.holds || !given.here ? { text: label, bold: f.holds, dim: !f.holds } : once(`fork:${f.session}`, label, () => given.named(f.running ? 'open' : 'give', f.session), { dim: true }))
+    }
+    rows.push(row)
   }
 
   // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
   // An approval is the thing itself, with its two presses beside it:
   //   [approve] [deny]  REACH is 'lines:scene' of TOKEN on kapteyn, for ramen
-  const approval = (line: Line) => (
-    <Box key={`approve:${line.id}`} flexDirection="row">
-      {twice(`approve:${line.id}`, 'approve', YES, () => act({ act: 'release', to: line.to, collection: line.collection, id: line.id }))}
-      {gap}
-      {twice(`deny:${line.id}`, 'deny', NO, () => act({ act: 'cancel', to: line.to, collection: line.collection, id: line.id }))}
-      {space(2)}
-      <Text bold wrap="truncate">{line.says}</Text>
-    </Box>
-  )
+  for (const line of given.lines.filter(l => l.way === 'approve')) {
+    rows.push([
+      twice(`approve:${line.id}`, '[approve]', '[APPROVE]', YES, () => act({ act: 'release', to: line.to, collection: line.collection, id: line.id })),
+      gap(),
+      twice(`deny:${line.id}`, '[deny]', '[DENY]', NO, () => act({ act: 'cancel', to: line.to, collection: line.collection, id: line.id })),
+      gap(2),
+      { text: line.says, bold: true, rest: true },
+    ])
+  }
 
-  // A pill at rest, in the line of them: pressed, it is the one open.
-  const rest = (p: Pill) => (
-    <Box key={`rest:${p.key}`} flexShrink={0} flexDirection="row">
-      <Button key={`pill:${p.key}`} plain onPress={() => set(view.open === p.key ? {} : { open: p.key })}>
-        <Text bold={view.open === p.key} inverse={view.open === p.key}>{titleOf(p, now)}</Text>
-      </Button>
-      {gap}
-    </Box>
-  )
+  // The line of pills: pressed, a pill is the one open; pressed again, it rests.
+  if (all.length > 0) {
+    const row: Piece[] = []
+    for (const p of all) {
+      const open = view.open === p.key
+      row.push(once(`pill:${p.key}`, titleOf(p, now), () => set(open ? {} : { open: p.key }), { bold: open, inverse: open }))
+      row.push(gap())
+    }
+    rows.push(row)
+  }
 
   // What the open pill holds, under the line of pills, as the person knows it.
-  const held = (p: Pill) => {
+  for (const p of all.filter(p => p.key === view.open)) {
     const moving = view.moving?.[p.key]
     const flashing = moving !== undefined && now - moving.at < FLASH_MS
     // "its the +- its bg that was supposed to change color"
-    const lit = (pair: number) => {
+    const lit = (pair: number): Partial<Piece> => {
       if (!moving || moving.pair !== pair) return {}
       return flashing ? { backgroundColor: moving.up ? YES : NO, color: 'white' } : { backgroundColor: 'white', color: 'black' }
     }
-    // "but the invert on the time, you may keep"
-    const when = moving ? { backgroundColor: 'white', color: 'black' } : {}
     const at = moving?.until ?? p.at
-    const nudge = (pair: number, up: boolean, minutes: number) => (
-      <Button
-        key={`${pair === 0 ? 'h' : 'm'}${up ? '+' : '-'}:${p.key}`}
-        plain
-        onPress={() => at && given.move(p.key, p.to, moved(at, minutes), up, pair)}
-      >
-        <Text {...lit(pair)}>{up ? '+' : '-'}</Text>
-      </Button>
-    )
-    return (
-      <Box key={`held:${p.key}`} flexDirection="column">
-        <Box key="presses" flexDirection="row">
-          {nudge(0, true, 60)}{nudge(0, false, -60)}{gap}{nudge(1, true, 5)}{nudge(1, false, -5)}{gap}
-          {twice(`now:${p.key}`, 'now', YES, () => act({ act: 'release', to: p.to, collection: p.key }))}
-          {space(9)}
-          <Button key={`edit:${p.key}`} plain onPress={() => set({ ...view, armed: undefined, editing: view.editing === p.key ? undefined : p.key })}>
-            <Text>[edit]</Text>
-          </Button>
-          {space(14)}
-          {twice(`delete:${p.key}`, 'delete', NO, () => act({ act: 'cancel', to: p.to, collection: p.key }))}
-          {gap}
-          {/* "cancel should get us out of the clicked-in," A time moved and not yet held stays where it was. */}
-          <Button key={`esc:${p.key}`} plain onPress={() => set({ moving: without(view.moving, p.key) })}>
-            <Text>[esc]</Text>
-          </Button>
-        </Box>
-        {p.lines.map(line => message(p, line, whenOf(at, now), when))}
-      </Box>
-    )
-  }
-
-  // One message of the open pill: when, which way, who, what it says.
-  // "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
-  const message = (p: Pill, line: Line, at: string, when: object) => {
-    const id = `arrow:${line.id}`
-    const lead = (
-      <Box flexShrink={0} flexDirection="row">
-        {space(2)}
-        <Text {...when}>{at}</Text>
-        {gap}
-        <Button
-          key={id}
-          plain
-          onPress={async () => {
-            const pressedAt = await given.clock()
-            const live = view.armed?.id === id && pressedAt - view.armed.at <= ARMED_FOR_MS
-            return live ? act({ act: 'cancel', to: p.to, collection: p.key, id: line.id }) : set({ ...view, armed: { id, at: pressedAt } })
-          }}
-        >
-          <Text color={armed === id ? NO : undefined}>{armed === id ? 'XXXX' : p.way === 'in' ? '<-- ' : '--> '}</Text>
-        </Button>
-        <Text bold>{line.who}</Text>
-        <Text>: </Text>
-      </Box>
-    )
-    // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
-    // Edited in the engine's own field, holding what it says: Enter saves what
-    // this one says, and sends nothing.
-    if (view.editing === p.key) {
-      return (
-        <Box key={`msg:${line.id}`} flexDirection="column">
-          {lead}
-          <Input
-            key={`says:${line.id}`}
-            value={line.says}
-            rows={Math.min(8, Math.max(2, line.says.split('\n').length))}
-            submitLabel="save"
-            onSubmit={(says: string) => act({ act: 'edit', to: p.to, collection: p.key, id: line.id, says })}
-          />
-        </Box>
-      )
+    const nudge = (pair: number, up: boolean, minutes: number): Piece =>
+      once(`${pair === 0 ? 'h' : 'm'}${up ? '+' : '-'}:${p.key}`, up ? '+' : '-', () => at && given.move(p.key, p.to, moved(at, minutes), up, pair), lit(pair))
+    rows.push([
+      nudge(0, true, 60), nudge(0, false, -60), gap(), nudge(1, true, 5), nudge(1, false, -5), gap(),
+      twice(`now:${p.key}`, '[now]', '[NOW]', YES, () => act({ act: 'release', to: p.to, collection: p.key })),
+      gap(9),
+      once(`edit:${p.key}`, '[edit]', () => set({ ...view, armed: undefined, editing: view.editing === p.key ? undefined : p.key })),
+      gap(14),
+      twice(`delete:${p.key}`, '[delete]', '[DELETE]', NO, () => act({ act: 'cancel', to: p.to, collection: p.key })),
+      gap(),
+      // "cancel should get us out of the clicked-in," A time moved and not yet held stays where it was.
+      once(`esc:${p.key}`, '[esc]', () => set({ moving: without(view.moving, p.key) })),
+    ])
+    for (const line of p.lines) {
+      // "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
+      // "but the invert on the time, you may keep"
+      rows.push([
+        gap(2),
+        { text: whenOf(at, now), ...(moving ? { backgroundColor: 'white', color: 'black' } : {}) },
+        gap(),
+        twice(`arrow:${line.id}`, p.way === 'in' ? '<-- ' : '--> ', 'XXXX', NO, () => act({ act: 'cancel', to: p.to, collection: p.key, id: line.id }), false),
+        { text: line.who, bold: true },
+        { text: ': ' },
+        { text: line.says, dim: true, rest: true },
+      ])
+      // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
+      // Edited in the engine's own field, holding what it says: Enter saves
+      // what this one says, and sends nothing.
+      if (view.editing === p.key)
+        fields.push({
+          key: `says:${line.id}`,
+          label: line.who,
+          value: line.says,
+          rows: Math.min(8, Math.max(2, line.says.split('\n').length)),
+          save: (says: string) => act({ act: 'edit', to: p.to, collection: p.key, id: line.id, says }),
+        })
     }
-    return (
-      <Box key={`msg:${line.id}`} flexDirection="row">
-        {lead}
-        <Text dimColor wrap="truncate">{line.says}</Text>
-      </Box>
-    )
   }
 
-  return (
-    <Box flexDirection="column">
-      {given.forks.length > 0 ? forksRow() : null}
-      {given.lines.filter(l => l.way === 'approve').map(approval)}
-      {all.length > 0 ? <Box key="pills" flexDirection="row">{all.map(rest)}</Box> : null}
-      {all.filter(p => p.key === view.open).map(held)}
-    </Box>
-  )
+  return { rows, does, fields }
 }
 
 // What moves, less the one of this collection.

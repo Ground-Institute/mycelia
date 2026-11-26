@@ -270,6 +270,42 @@ async function moved($: EngineInterface, sessionId: string) {
   if (due.length > 0) await ask($, sessionId)
 }
 
+// What is drawn now, and what each press of it does.
+async function drawn($: EngineInterface, sessionId: string) {
+  const now = await read($, said)
+  const branched = (await read($, forks)) ?? { name: '', here: true, forks: [] }
+  const pressed: View = (await read($, view)) ?? {}
+  const ask$ = async (d: Press) => {
+    await press($, d, sessionId)
+    await ask($, sessionId)
+  }
+  return pills({
+    lines: now?.ok ? now.lines : [],
+    forks: branched.forks,
+    name: branched.name,
+    here: branched.here,
+    view: pressed,
+    now: await $.clock.now(),
+    clock: () => $.clock.now(),
+    set: pressedNow => update($, view, () => pressedNow),
+    // What was armed or edited is done with once it is asked; a time
+    // still moving on this collection is the press's own no longer.
+    act: async press => {
+      const moving = { ...pressed.moving }
+      delete moving[press.collection ?? '']
+      await update($, view, () => ({ open: pressed.open, moving }))
+      await ask$(press)
+    },
+    // "another click resets timer, timer finishes means, you commit to this new time"
+    move: async (collection, to, until, up, pair) => {
+      const at = await $.clock.now()
+      await update($, view, () => ({ ...pressed, armed: undefined, moving: { ...pressed.moving, [collection]: { to, until, at, up, pair } } }))
+    },
+    named: (act, to) => named($, act, to, sessionId),
+  })
+}
+
+
 export const register: Register = on => {
   let sessionId = ''
 
@@ -282,46 +318,30 @@ export const register: Register = on => {
     return started
   })
 
+  // A press in the band: the mouse went down on a piece that is one.
+  on('ui.message', async ($, e, next) => {
+    const key = (e.data as { press?: string }).press
+    if (key === undefined) return next(e)
+    await (await drawn($, sessionId)).does[key]?.()
+    return next(e)
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const now = await read($, said)
     const why = await read($, refused)
     const branched = (await read($, forks)) ?? { name: '', here: true, forks: [] }
-    const pressed: View = (await read($, view)) ?? {}
     if (now === null || (now.ok && now.lines.length === 0 && branched.forks.length === 0 && why === null)) return next(e)
-    const { Box, Text, Button, Input } = $.ui.resolve(e)
+    const { Box, Text, Client, Input } = $.ui.resolve(e)
     if (!now.ok) return <Box><Text color="red">{now.text}</Text></Box>
+    const band = await drawn($, sessionId)
     return (
       <Box flexDirection="column">
-        {pills({ Box, Text, Button, Input }, {
-          lines: now.lines,
-          forks: branched.forks,
-          name: branched.name,
-          here: branched.here,
-          view: pressed,
-          now: await $.clock.now(),
-          clock: () => $.clock.now(),
-          set: pressedNow => update($, view, () => pressedNow),
-          // What was armed or edited is done with once it is asked; a time
-          // still moving on this collection is the press's own no longer.
-          act: async press => {
-            const moving = { ...pressed.moving }
-            delete moving[press.collection ?? '']
-            await update($, view, () => ({ open: pressed.open, moving }))
-            await ask$(press)
-          },
-          // "another click resets timer, timer finishes means, you commit to this new time"
-          move: async (collection, to, until, up, pair) => {
-            const at = await $.clock.now()
-            await update($, view, () => ({ ...pressed, armed: undefined, moving: { ...pressed.moving, [collection]: { to, until, at, up, pair } } }))
-          },
-          named: (act, to) => named($, act, to, sessionId),
-        })}
+        <Client key="pills" module="./band.tsx" props={{ rows: band.rows }} />
+        {band.fields.map(field => (
+          <Input key={field.key} label={field.label} value={field.value} rows={field.rows} submitLabel="save" onSubmit={(says: string) => field.save(says)} />
+        ))}
         {why === null ? null : <Text color="red">{why}</Text>}
       </Box>
     )
-    async function ask$(d: Press) {
-      await press($, d, sessionId)
-      await ask($, sessionId)
-    }
   })
 }
