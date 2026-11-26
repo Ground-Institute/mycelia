@@ -115,28 +115,44 @@ test('the pills are one line, the soonest first, a day not today before its time
   await ui.unmount()
 })
 
-test('a pill pressed is across its row with what it holds; pressed again, it rests', async ($, on) => {
+// The row of an open pill, drawn: every Text and Button of it, joined.
+async function rowOf(ui: Awaited<ReturnType<typeof mounted>>, from: string, upTo: string) {
+  const all = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  return all.slice(all.indexOf(from), all.lastIndexOf(upTo) + 1).join('')
+}
+
+// "+- +- [now]         [edit]              [delete] [esc]"
+// "  16:25 <-- Shiitake: Some text of Shiitake to us."
+// "like i said, you cant just pull thinngs from under me. it cost me energy to learn, and i expect it to hold"
+test('an open pill holds what the person knows, to the character; esc and the pill itself put it to rest', async ($, on) => {
   engine(on, [])
   const ui = await mounted($)
 
   await ui.press({ key: `pill:${IN}` })
-  expect((await ui.find({ type: 'Button', key: `now:${IN}` }))?.text).toBe('[now]')
-  expect((await ui.find({ type: 'Text', text: 'hello' }))?.text).toBe('hello')
+  expect(await rowOf(ui, '+', '[esc]')).toBe('+- +- [now]         [edit]              [delete] [esc]')
+  expect(await rowOf(ui, '  ', 'hello')).toBe('  15:40 <-- Shiitake: hello')
   // The other pill stays at rest.
   expect(await ui.find({ type: 'Button', key: `now:${OUT}` })).toBeUndefined()
+  // "cancel should get us out of the clicked-in,"
+  await ui.press({ key: `esc:${IN}` })
+  expect(await ui.find({ type: 'Button', key: `now:${IN}` })).toBeUndefined()
+  await ui.press({ key: `pill:${IN}` })
   await ui.press({ key: `pill:${IN}` })
   expect(await ui.find({ type: 'Button', key: `now:${IN}` })).toBeUndefined()
+  // What this session said goes the other way.
+  await ui.press({ key: `pill:${OUT}` })
+  expect(await rowOf(ui, '  ', 'Mycelia here')).toBe('  16:00 --> Shiitake: Mycelia here')
   await ui.unmount()
 })
 
 // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
-test('a message is edited in the engine\'s own field, holding what it says, and saved without being sent', async ($, on) => {
+test('edit puts what a message says in the engine\'s own field; Enter saves it and sends nothing', async ($, on) => {
   const asked: Asked[] = []
   engine(on, [], ANSWER, asked)
   const ui = await mounted($)
 
   await ui.press({ key: `pill:${IN}` })
-  await ui.press({ key: `edit:${HELLO}` })
+  await ui.press({ key: `edit:${IN}` })
   const field = await ui.find({ type: 'Input', key: `says:${HELLO}` })
   expect(field?.props.value).toBe('hello')
   await ui.input({ key: `says:${HELLO}`, text: 'hello, edited' })
@@ -148,47 +164,110 @@ test('a message is edited in the engine\'s own field, holding what it says, and 
   await ui.unmount()
 })
 
-// "or having a collection wait for days"
-// "why wont i see 26, when i go two days into the future?"
-test('a time is moved on for days, says its day, and is held where it was moved to by one press', async ($, on) => {
+// "bg red when minus, bg green when plus, for like a sec"
+// "and then for a full 30 sec, it stays bg white with text black"
+// "another click resets timer, timer finishes means, you commit to this new time"
+// "its the +- its bg that was supposed to change color, but the invert on the time, you may keep"
+// "decrease the wait to 20s"
+test('+- waits for the last press: the +- pressed is green or red a second, white twenty, then the hold is asked once', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, [], ANSWER, asked)
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
   const ui = await mounted($)
   const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
+  // What the nth Text saying exactly this wears.
+  const worn = async (text: string, nth = 0) => {
+    const t = (await ui.findAll({ type: 'Text' })).filter(x => x.text === text)[nth]
+    return [t?.props.backgroundColor, t?.props.color]
+  }
+
+  await ui.press({ key: `pill:${IN}` })
+  // + on the hours: that +- green, the time inverted, nothing asked.
+  await ui.press({ key: `h+:${IN}` })
+  expect(await worn('+', 0)).toEqual(['green', 'white'])
+  expect(await worn('-', 0)).toEqual(['green', 'white'])
+  expect(await worn('+', 1)).toEqual([undefined, undefined])
+  expect(await worn('16:40')).toEqual(['white', 'black'])
+  expect(holds().length).toBe(0)
+  // A second on, that +- waits white with black text.
+  await clock.advance(1000)
+  expect(await worn('+', 0)).toEqual(['white', 'black'])
+  // - on the minutes fifteen seconds in: that +- red, and the wait starts over.
+  await clock.advance(15000)
+  await ui.press({ key: `m-:${IN}` })
+  expect(await worn('+', 1)).toEqual(['red', 'white'])
+  expect(await worn('+', 0)).toEqual([undefined, undefined])
+  expect(await worn('16:35')).toEqual(['white', 'black'])
+  await clock.advance(19000)
+  expect(holds().length).toBe(0)
+  await clock.advance(3000)
+  expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${at(16, 35).replace('.000Z', 'Z')}"}`])
+  expect(await worn('+', 1)).toEqual([undefined, undefined])
+  await clock.advance(60000)
+  expect(holds().length).toBe(1)
+  await ui.unmount()
+})
+
+// "or having a collection wait for days"
+// "why wont i see 26, when i go two days into the future?"
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+test('a time is moved on for days and says its day, and is held where it was moved to', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
 
   await ui.press({ key: `pill:${IN}` })
   for (let i = 0; i < 49; i++) await ui.press({ key: `h+:${IN}` })
-  await ui.press({ key: `m-:${IN}` })
-  // Moving asks nothing of the node.
-  expect(holds().length).toBe(0)
-  expect((await ui.find({ type: 'Button', key: `hold:${IN}` }))?.text).toBe('[hold until 11-16.16:35]')
-  await ui.press({ key: `hold:${IN}` })
-  expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${new Date(2026, 10, 16, 16, 35).toISOString().replace('.000Z', 'Z')}"}`])
-  // Held, there is nothing left to hold until it is moved again.
-  expect(await ui.find({ type: 'Button', key: `hold:${IN}` })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: '16:40' }))?.text).toBe('11-16.16:40')
+  await clock.advance(22000)
+  expect(asked.filter(a => a[0] === '/api/collected/hold').map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${new Date(2026, 10, 16, 16, 40).toISOString().replace('.000Z', 'Z')}"}`])
+  await ui.unmount()
+})
+
+test('esc leaves a moved time where it was: nothing is held', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+
+  await ui.press({ key: `pill:${IN}` })
+  await ui.press({ key: `h+:${IN}` })
+  await ui.press({ key: `esc:${IN}` })
+  await clock.advance(60000)
+  expect(asked.some(a => a[0] === '/api/collected/hold')).toBe(false)
   await ui.unmount()
 })
 
 // "[now], this means to me kind fo same thing as [delete] two stage, press once, you get [NOW] green, and press another time, it actually get's released"
-test('now and delete take two presses: the first arms and says what the second does', async ($, on) => {
+// "and there should be a more explicit abort, that is two stage abort"
+// "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
+test('now, delete and the arrow take two presses: [NOW] green, [DELETE] red, XXXX red', async ($, on) => {
   const asked: Asked[] = []
   engine(on, [], ANSWER, asked)
   const ui = await mounted($)
 
   await ui.press({ key: `pill:${IN}` })
   await ui.press({ key: `now:${IN}` })
-  const armed = await ui.find({ type: 'Text', text: '[again: release now]' })
-  expect([armed?.props.color, armed?.props.bold]).toEqual(['green', true])
+  const now = await ui.find({ type: 'Text', text: '[NOW]' })
+  expect([now?.props.color, now?.props.bold]).toEqual(['green', true])
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
   // Arming another lets the first go.
-  await ui.press({ key: `delete:${HELLO}` })
-  expect((await ui.find({ type: 'Text', text: '[again: delete this one]' }))?.props.color).toBe('red')
+  await ui.press({ key: `delete:${IN}` })
+  expect((await ui.find({ type: 'Text', text: '[DELETE]' }))?.props.color).toBe('red')
   expect((await ui.find({ type: 'Button', key: `now:${IN}` }))?.text).toBe('[now]')
-  await ui.press({ key: `delete:${HELLO}` })
+  expect(asked.some(a => a[0] === '/api/collected/cancel')).toBe(false)
+  // The arrow: once is XXXX, twice deletes that one message.
+  await ui.press({ key: `arrow:${HELLO}` })
+  expect((await ui.find({ type: 'Text', text: 'XXXX' }))?.props.color).toBe('red')
+  await ui.press({ key: `arrow:${HELLO}` })
   expect(asked).toContainEqual(['/api/collected/cancel', SECRET, `{"to":"did:key:z6MkMe","collection":"c-in","id":"${HELLO}"}`])
   await ui.press({ key: `now:${IN}` })
   await ui.press({ key: `now:${IN}` })
   expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
+  await ui.press({ key: `delete:${IN}` })
+  await ui.press({ key: `delete:${IN}` })
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
   await ui.unmount()
 })
 
@@ -210,17 +289,19 @@ test('an armed press waits five seconds for its second: after that, a press arms
 })
 
 // "yeah, i dont think it want's to move beyond 20:00"
-test('what is pressed outlives the drawing: drawn anew, the pill is open and its time still moved', async ($, on) => {
+test('what is pressed outlives the drawing: drawn anew, the pill is open, its time still moved, and it is held', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, [], ANSWER, asked)
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
   const first = await mounted($)
   await first.press({ key: `pill:${IN}` })
   await first.press({ key: `h+:${IN}` })
   await first.unmount()
 
   const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await again.find({ type: 'Button', key: `hold:${IN}` }))?.text).toBe('[hold until 16:40]')
-  await again.press({ key: `hold:${IN}` })
+  const shown = await again.find({ type: 'Text', text: '16:40' })
+  expect([shown?.props.backgroundColor, shown?.props.color]).toEqual(['white', 'black'])
+  await clock.advance(22000)
   expect(asked.filter(a => a[0] === '/api/collected/hold').length).toBe(1)
   await again.unmount()
 })
@@ -231,7 +312,8 @@ test('what the node refuses is said in red under the pills, and the pill stays o
   const ui = await mounted($)
 
   await ui.press({ key: `pill:${IN}` })
-  await ui.press({ key: `later:${IN}` })
+  await ui.press({ key: `now:${IN}` })
+  await ui.press({ key: `now:${IN}` })
   const why = await ui.find({ type: 'Text', text: 'not yours to act on' })
   expect(why?.props.color).toBe('red')
   expect((await ui.find({ type: 'Button', key: `now:${IN}` }))?.text).toBe('[now]')
@@ -253,7 +335,7 @@ test('an approval is the thing itself: approve twice approves it, deny twice den
 
   expect((await ui.find({ type: 'Text', text: 'REACH is' }))?.props.bold).toBe(true)
   await ui.press({ key: 'approve:r1' })
-  expect((await ui.find({ type: 'Text', text: '[again: approve]' }))?.props.color).toBe('green')
+  expect((await ui.find({ type: 'Text', text: '[APPROVE]' }))?.props.color).toBe('green')
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
   await ui.press({ key: 'approve:r1' })
   expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkRamen","collection":"c-ramen","id":"r1"}'])

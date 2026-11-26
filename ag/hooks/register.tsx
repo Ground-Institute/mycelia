@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
 
 import type { Forks, Line, Said, View } from '../types'
-import { pills } from './pill'
+import { pills, FLASH_MS, WAIT_MS } from './pill'
 import type { Press } from './pill'
 
 // "so its like a mushroom that pop's up, and that is ag in a sense."
@@ -254,6 +254,22 @@ async function named($: EngineInterface, act: 'take' | 'give' | 'open', to: stri
   await ask($, sessionId)
 }
 
+// "i think it's okay for it to wait until i am finished clicking, and for me to see if its waiting for another click for me"
+// Every second while a time is moving: one whose wait ran out is held, each
+// once, and the pills are drawn again, so the flash ends and the wait shows.
+async function moved($: EngineInterface, sessionId: string) {
+  const pressed: View = (await read($, view)) ?? {}
+  const moving = { ...pressed.moving }
+  if (Object.keys(moving).length === 0) return
+  const now = await $.clock.now()
+  const due = Object.entries(moving).filter(([, m]) => now - m.at >= FLASH_MS + WAIT_MS)
+  for (const [collection] of due) delete moving[collection]
+  // Drawn again by a value that changed: the clock it was drawn at.
+  await update($, view, () => ({ ...pressed, moving, drawn: now }))
+  for (const [collection, m] of due) await press($, { act: 'hold', to: m.to, collection, until: m.until }, sessionId)
+  if (due.length > 0) await ask($, sessionId)
+}
+
 export const register: Register = on => {
   let sessionId = ''
 
@@ -262,6 +278,7 @@ export const register: Register = on => {
     sessionId = await $.session.id()
     await ask($, sessionId)
     $.clock.every(EVERY_MS, () => ask($, sessionId))
+    $.clock.every(1000, () => moved($, sessionId))
     return started
   })
 
@@ -284,12 +301,18 @@ export const register: Register = on => {
           now: await $.clock.now(),
           clock: () => $.clock.now(),
           set: pressedNow => update($, view, () => pressedNow),
-          // What was armed, edited or moved is done with once it is asked.
+          // What was armed or edited is done with once it is asked; a time
+          // still moving on this collection is the press's own no longer.
           act: async press => {
-            const until = { ...pressed.until }
-            delete until[press.collection ?? '']
-            await update($, view, () => ({ open: pressed.open, until }))
+            const moving = { ...pressed.moving }
+            delete moving[press.collection ?? '']
+            await update($, view, () => ({ open: pressed.open, moving }))
             await ask$(press)
+          },
+          // "another click resets timer, timer finishes means, you commit to this new time"
+          move: async (collection, to, until, up, pair) => {
+            const at = await $.clock.now()
+            await update($, view, () => ({ ...pressed, armed: undefined, moving: { ...pressed.moving, [collection]: { to, until, at, up, pair } } }))
           },
           named: (act, to) => named($, act, to, sessionId),
         })}

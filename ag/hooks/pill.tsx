@@ -6,11 +6,12 @@ import type { Fork, Line, View } from '../types'
 //
 // What waits is a pill above the prompt, as elements has it above a chat's
 // field (teranos/elements content/say.ts `waiting`, forms/pill.ts): at rest it
-// says its title; pressed, it is across its row with what it holds; pressed
-// again, it rests. Its presses are elements' presses (forms/press.ts): one
-// press does it, or the first arms and says what the second does, red where it
-// cannot be undone and green where it sends. Drawn with the engine's own
-// Button and Input, so nothing here places a character or reads a click.
+// says when, which way and who; pressed, what it holds stands under the line
+// of pills, as the person knows it:
+//   +- +- [now]         [edit]              [delete] [esc]
+//     16:25 <-- Shiitake: Some text of Shiitake to us.
+// Drawn with the engine's own Button and Input, so nothing here places a
+// character or reads a click.
 
 // The engine's elements this draws with, as `$.ui.resolve(e)` gives them.
 type Table = { Box: any; Text: any; Button: any; Input: any }
@@ -30,14 +31,23 @@ export type Given = {
   clock: () => Promise<number> // this clock when pressed
   set: (view: View) => unknown
   act: (press: Press) => unknown
+  // A +- press: the collection, on whom, the time it is moved to, up or down, and which +-.
+  move: (collection: string, to: string, until: string, up: boolean, pair: number) => unknown
   named: (act: 'take' | 'give' | 'open', session: string) => unknown
 }
 
 // How long an armed press waits for its second (elements ARMED_FOR_MS).
 export const ARMED_FOR_MS = 5000
-// What an armed press wears (elements MEANS): yes sends, no cannot be undone.
+// What an armed press wears: green sends, red cannot be undone.
 const YES = 'green'
 const NO = 'red'
+
+// "bg red when minus, bg green when plus, for like a sec"
+// "decrease the wait to 20s"
+// A +- press flashes for FLASH_MS, then waits WAIT_MS more; the time moved to
+// is held once both have passed since the last press (register.tsx).
+export const FLASH_MS = 1000
+export const WAIT_MS = 20000
 
 // "17:35<-[Rowan] 18:32->[Keeper] 11-29.12:24->[Window] 11-29.13:45<-Noah[vfxstreet]"
 // "click on a pill to expand, it and then interact with it."
@@ -97,8 +107,9 @@ export function pills(table: Table, given: Given) {
     </Button>
   )
 
-  // The first press arms and says what the second does; the second does it.
-  const twice = (id: string, title: string, again: string, means: string, does: () => unknown) => (
+  // "[now], this means to me kind fo same thing as [delete] two stage, press once, you get [NOW] green, and press another time, it actually get's released"
+  // The first press arms it, in capitals; the second does it.
+  const twice = (id: string, title: string, means: string, does: () => unknown) => (
     <Button
       key={id}
       plain
@@ -110,12 +121,13 @@ export function pills(table: Table, given: Given) {
       }}
     >
       <Text color={armed === id ? means : undefined} bold={armed === id}>
-        {armed === id ? `[again: ${again}]` : `[${title}]`}
+        {armed === id ? `[${title.toUpperCase()}]` : `[${title}]`}
       </Text>
     </Button>
   )
 
   const gap = <Text> </Text>
+  const space = (n: number) => <Text>{' '.repeat(n)}</Text>
   const all = pillsOf(given.lines)
 
   // "⑂ Mycelia stays with  ● this session   ○ mycelia on k"
@@ -149,50 +161,18 @@ export function pills(table: Table, given: Given) {
   }
 
   // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
-  // An approval is the thing itself, with its two presses beside it.
+  // An approval is the thing itself, with its two presses beside it:
+  //   [approve] [deny]  REACH is 'lines:scene' of TOKEN on kapteyn, for ramen
   const approval = (line: Line) => (
     <Box key={`approve:${line.id}`} flexDirection="row">
-      {twice(`approve:${line.id}`, 'approve', 'approve', YES, () => act({ act: 'release', to: line.to, collection: line.collection, id: line.id }))}
+      {twice(`approve:${line.id}`, 'approve', YES, () => act({ act: 'release', to: line.to, collection: line.collection, id: line.id }))}
       {gap}
-      {twice(`deny:${line.id}`, 'deny', 'deny', NO, () => act({ act: 'cancel', to: line.to, collection: line.collection, id: line.id }))}
-      {gap}
+      {twice(`deny:${line.id}`, 'deny', NO, () => act({ act: 'cancel', to: line.to, collection: line.collection, id: line.id }))}
+      {space(2)}
       <Text bold wrap="truncate">{line.says}</Text>
     </Box>
   )
 
-  // One message in an open pill: who said it and what, to edit or to delete.
-  const message = (pill: Pill, line: Line) => {
-    if (view.editing === line.id) {
-      return (
-        <Box key={`msg:${line.id}`} flexDirection="column">
-          <Input
-            key={`says:${line.id}`}
-            label={line.who}
-            value={line.says}
-            rows={Math.min(8, Math.max(2, line.says.split('\n').length))}
-            submitLabel="save"
-            onSubmit={(says: string) => act({ act: 'edit', to: pill.to, collection: pill.key, id: line.id, says })}
-          />
-          {once(`edit-off:${line.id}`, 'esc', () => set({ ...view, editing: undefined }))}
-        </Box>
-      )
-    }
-    return (
-      <Box key={`msg:${line.id}`} flexDirection="row">
-        <Box flexShrink={0} flexDirection="row">
-          {once(`edit:${line.id}`, 'edit', () => set({ ...view, editing: line.id, armed: undefined }))}
-          {gap}
-          {twice(`delete:${line.id}`, 'delete', 'delete this one', NO, () => act({ act: 'cancel', to: pill.to, collection: pill.key, id: line.id }))}
-          {gap}
-          <Text bold>{line.who}</Text>
-          <Text>: </Text>
-        </Box>
-        <Text dimColor wrap="truncate">{line.says}</Text>
-      </Box>
-    )
-  }
-
-  // A pill: its title at rest; pressed, across its row with what it holds.
   // A pill at rest, in the line of them: pressed, it is the one open.
   const rest = (p: Pill) => (
     <Box key={`rest:${p.key}`} flexShrink={0} flexDirection="row">
@@ -203,29 +183,94 @@ export function pills(table: Table, given: Given) {
     </Box>
   )
 
-  // What the open pill holds, under the line of pills.
+  // What the open pill holds, under the line of pills, as the person knows it.
   const held = (p: Pill) => {
-    const until = view.until?.[p.key]
-    const nudge = (id: string, title: string, minutes: number) =>
-      once(`${id}:${p.key}`, title, () => p.at && set({ ...view, armed: undefined, until: { ...view.until, [p.key]: moved(until ?? p.at, minutes) } }))
+    const moving = view.moving?.[p.key]
+    const flashing = moving !== undefined && now - moving.at < FLASH_MS
+    // "its the +- its bg that was supposed to change color"
+    const lit = (pair: number) => {
+      if (!moving || moving.pair !== pair) return {}
+      return flashing ? { backgroundColor: moving.up ? YES : NO, color: 'white' } : { backgroundColor: 'white', color: 'black' }
+    }
+    // "but the invert on the time, you may keep"
+    const when = moving ? { backgroundColor: 'white', color: 'black' } : {}
+    const at = moving?.until ?? p.at
+    const nudge = (pair: number, up: boolean, minutes: number) => (
+      <Button
+        key={`${pair === 0 ? 'h' : 'm'}${up ? '+' : '-'}:${p.key}`}
+        plain
+        onPress={() => at && given.move(p.key, p.to, moved(at, minutes), up, pair)}
+      >
+        <Text {...lit(pair)}>{up ? '+' : '-'}</Text>
+      </Button>
+    )
     return (
       <Box key={`held:${p.key}`} flexDirection="column">
-        <Box key="when" flexDirection="row">
-          {nudge('h-', '-1h', -60)}{gap}{nudge('h+', '+1h', 60)}{gap}{nudge('m-', '-5m', -5)}{gap}{nudge('m+', '+5m', 5)}
+        <Box key="presses" flexDirection="row">
+          {nudge(0, true, 60)}{nudge(0, false, -60)}{gap}{nudge(1, true, 5)}{nudge(1, false, -5)}{gap}
+          {twice(`now:${p.key}`, 'now', YES, () => act({ act: 'release', to: p.to, collection: p.key }))}
+          {space(9)}
+          <Button key={`edit:${p.key}`} plain onPress={() => set({ ...view, armed: undefined, editing: view.editing === p.key ? undefined : p.key })}>
+            <Text>[edit]</Text>
+          </Button>
+          {space(14)}
+          {twice(`delete:${p.key}`, 'delete', NO, () => act({ act: 'cancel', to: p.to, collection: p.key }))}
           {gap}
-          {until === undefined ? (
-            <Text dimColor>{whenOf(p.at, now)}</Text>
-          ) : (
-            once(`hold:${p.key}`, `hold until ${whenOf(until, now)}`, () => act({ act: 'hold', to: p.to, collection: p.key, until }))
-          )}
-          {gap}
-          {twice(`now:${p.key}`, 'now', 'release now', YES, () => act({ act: 'release', to: p.to, collection: p.key }))}
-          {gap}
-          {once(`later:${p.key}`, 'later', () => act({ act: 'later', to: p.to, collection: p.key }))}
-          {gap}
-          {twice(`delete:${p.key}`, 'delete', 'delete all of it', NO, () => act({ act: 'cancel', to: p.to, collection: p.key }))}
+          {/* "cancel should get us out of the clicked-in," A time moved and not yet held stays where it was. */}
+          <Button key={`esc:${p.key}`} plain onPress={() => set({ moving: without(view.moving, p.key) })}>
+            <Text>[esc]</Text>
+          </Button>
         </Box>
-        {p.lines.map(line => message(p, line))}
+        {p.lines.map(line => message(p, line, whenOf(at, now), when))}
+      </Box>
+    )
+  }
+
+  // One message of the open pill: when, which way, who, what it says.
+  // "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
+  const message = (p: Pill, line: Line, at: string, when: object) => {
+    const id = `arrow:${line.id}`
+    const lead = (
+      <Box flexShrink={0} flexDirection="row">
+        {space(2)}
+        <Text {...when}>{at}</Text>
+        {gap}
+        <Button
+          key={id}
+          plain
+          onPress={async () => {
+            const pressedAt = await given.clock()
+            const live = view.armed?.id === id && pressedAt - view.armed.at <= ARMED_FOR_MS
+            return live ? act({ act: 'cancel', to: p.to, collection: p.key, id: line.id }) : set({ ...view, armed: { id, at: pressedAt } })
+          }}
+        >
+          <Text color={armed === id ? NO : undefined}>{armed === id ? 'XXXX' : p.way === 'in' ? '<-- ' : '--> '}</Text>
+        </Button>
+        <Text bold>{line.who}</Text>
+        <Text>: </Text>
+      </Box>
+    )
+    // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
+    // Edited in the engine's own field, holding what it says: Enter saves what
+    // this one says, and sends nothing.
+    if (view.editing === p.key) {
+      return (
+        <Box key={`msg:${line.id}`} flexDirection="column">
+          {lead}
+          <Input
+            key={`says:${line.id}`}
+            value={line.says}
+            rows={Math.min(8, Math.max(2, line.says.split('\n').length))}
+            submitLabel="save"
+            onSubmit={(says: string) => act({ act: 'edit', to: p.to, collection: p.key, id: line.id, says })}
+          />
+        </Box>
+      )
+    }
+    return (
+      <Box key={`msg:${line.id}`} flexDirection="row">
+        {lead}
+        <Text dimColor wrap="truncate">{line.says}</Text>
       </Box>
     )
   }
@@ -238,4 +283,11 @@ export function pills(table: Table, given: Given) {
       {all.filter(p => p.key === view.open).map(held)}
     </Box>
   )
+}
+
+// What moves, less the one of this collection.
+function without(moving: View['moving'], collection: string): View['moving'] {
+  const rest = { ...moving }
+  delete rest[collection]
+  return rest
 }

@@ -15,9 +15,13 @@ export type Line = {
   id: string
 }
 
+// A time moved by +- and not yet held: on whom, the time, when it was last
+// pressed, up or down, and which +- (0 the hours, 1 the minutes).
+export type Moving = { to: string; until: string; at: number; up: boolean; pair: number }
+
 // What of the pills is pressed: the one open, the press armed and when, the
-// time each collection was moved to and not yet held at, the message edited.
-export type View = { open?: string; armed?: { id: string; at: number }; until?: Record<string, string>; editing?: string }
+// time each collection is moved to and not yet held at, the pill edited.
+export type View = { open?: string; armed?: { id: string; at: number }; moving?: Record<string, Moving>; editing?: string; drawn?: number }
 
 // What `ground collected json` last said for this session: the lines it
 // holds, or, when it is no answer of the node's, what went wrong (ok false).
