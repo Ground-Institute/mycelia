@@ -56,7 +56,7 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], 
   })
 }
 
-const IN = 'in:did:key:z6MkMe'
+const IN = 'in:did:key:z6MkMe:Shiitake'
 const OUT = 'out:did:key:z6MkOther'
 const HELLO = '871588189c2ca9c4'
 const SECRET = 'a'.repeat(64)
@@ -69,19 +69,46 @@ async function mounted($: Parameters<Parameters<typeof test>[1]>[0]) {
 // "IN ELEMENTS THERE IS THE CHAT"
 // "IT HAS PILLS"
 // "WHY CANT IT BE LIKE THAT"
-test('what waits stands as a pill above the prompt: how many, from or for whom, and when', async ($, on) => {
+// "17:35<-[Rowan] 18:32->[Keeper] 11-29.12:24->[Window] 11-29.13:45<-Noah[vfxstreet]"
+test('what waits stands as a line of pills above the prompt: when, which way, who', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
   engine(on, ran, ANSWER, asked)
   const ui = await mounted($)
 
-  expect((await ui.find({ type: 'Button', key: `pill:${IN}` }))?.text).toBe(' 1 from Shiitake · 15:40 ')
-  expect((await ui.find({ type: 'Button', key: `pill:${OUT}` }))?.text).toBe(' 1 for Shiitake · 16:00 ')
+  expect((await ui.find({ type: 'Button', key: `pill:${IN}` }))?.text).toBe('15:40<-[Shiitake]')
+  expect((await ui.find({ type: 'Button', key: `pill:${OUT}` }))?.text).toBe('16:00->[Shiitake]')
   // At rest it holds nothing: no press of what is in it is drawn.
   expect(await ui.find({ type: 'Button', key: `now:${IN}` })).toBeUndefined()
   // Asked of mycelia, by the session's own id; ground is asked only for the forks.
   expect(asked).toContainEqual(['/collected', SECRET, '{"session":"sid"}'])
   expect(ran.every(argv => argv[1] === 'forks')).toBe(true)
+  await ui.unmount()
+})
+
+test('the pills are one line, the soonest first, a day not today before its time; what several agents sent is a pill each', async ($, on) => {
+  const asked: Asked[] = []
+  const tomorrow = new Date(2026, 10, 15, 12, 24).toISOString()
+  const kept = JSON.stringify({ collected: [
+    { to: 'Window', did: 'did:key:z6MkWindow', due: tomorrow, waiting: [
+      { id: 'w1', from: 'Mycelia', says: 'for Window', at: at(10, 0), from_did: ME },
+    ] },
+    { to: 'Mycelia', did: ME, due: at(17, 35), waiting: [
+      { id: 'r1', from: 'Rowan', says: 'from Rowan', at: at(9, 40), from_did: 'did:key:z6MkRowan' },
+      { id: 'v1', from: 'vfxstreet', says: 'from outside', at: at(9, 41), from_did: 'did:key:z6MkVfx' },
+      { id: 'r2', from: 'Rowan', says: 'Rowan again', at: at(9, 42), from_did: 'did:key:z6MkRowan' },
+    ] },
+  ] })
+  engine(on, [], kept, asked)
+  const ui = await mounted($)
+
+  const line = (await ui.findAll({ type: 'Button' })).map(b => b.text)
+  expect(line).toEqual(['17:35<-[Rowan]', '17:35<-[vfxstreet]', '11-15.12:24->[Window]'])
+  // What Rowan sent is released by itself: the outside agent's stays.
+  await ui.press({ key: `pill:in:${ME}:Rowan` })
+  await ui.press({ key: `now:in:${ME}:Rowan` })
+  await ui.press({ key: `now:in:${ME}:Rowan` })
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, `{"to":"${ME}","ids":["r1","r2"]}`])
   await ui.unmount()
 })
 
@@ -131,7 +158,7 @@ test('a time is moved on for days, says its day, and is held where it was moved 
   await ui.press({ key: `m-:${IN}` })
   // Moving asks nothing of the node.
   expect(holds().length).toBe(0)
-  expect((await ui.find({ type: 'Button', key: `hold:${IN}` }))?.text).toBe('[hold until 11-16 16:35]')
+  expect((await ui.find({ type: 'Button', key: `hold:${IN}` }))?.text).toBe('[hold until 11-16.16:35]')
   await ui.press({ key: `hold:${IN}` })
   expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","until":"${new Date(2026, 10, 16, 16, 35).toISOString().replace('.000Z', 'Z')}"}`])
   // Held, there is nothing left to hold until it is moved again.

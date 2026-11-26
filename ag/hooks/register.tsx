@@ -158,8 +158,10 @@ function untilOf(hhmm: string): string {
 }
 
 // The node's path and body for a press, as ground collected asked them.
-function askOf(d: Press): [string, Record<string, string>] {
-  const body: Record<string, string> = { to: d.to }
+function askOf(d: Press): [string, Record<string, string | string[]>] {
+  const body: Record<string, string | string[]> = { to: d.to }
+  // What one agent sent, of a collection several sent into.
+  if (d.act === 'release' && d.ids) body.ids = d.ids
   // One thing approved or denied by its own id.
   if ((d.act === 'cancel' || d.act === 'release' || d.act === 'edit') && d.id) body.id = d.id
   // A time a pill moved is the whole time; HH:MM is the next time this clock reads it.
