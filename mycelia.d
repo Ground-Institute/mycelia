@@ -791,6 +791,11 @@ int myceliaMain(const(char)[] home, Presses presses = null, Doors doors = null, 
                 Collects collects = null) {
     import core.stdc.time : time;
     import probe : laye;
+    // Before anything is answered: a client that goes does not end mycelia.
+    {
+        import unbroken : unbroken;
+        unbroken();
+    }
     auto fd = listenAt(home);
     agHome = home;
     long collectedAt = 0;
