@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, EngineInterface } from 'claude-code'
 
-import type { Forks, Line, Said } from '../types'
+import type { Forks, Line, Said, View } from '../types'
+import { pills } from './pill'
+import type { Press } from './pill'
 
 // "so its like a mushroom that pop's up, and that is ag in a sense."
 // "like, ag is just spores"
@@ -10,8 +12,8 @@ import type { Forks, Line, Said } from '../types'
 // that goes out, and what waits on the person to approve, as mycelia holds
 // them: ag asks mycelia over its socket, paired with the person's finger, and
 // sorts them by the DID of the session's own key, which mycelia reads from the
-// key ground keeps for it. Each is one line, drawn and pressed by the Client
-// in ./lines.tsx. Nothing waiting draws nothing; what went wrong is drawn as
+// key ground keeps for it. They stand as pills above the prompt, drawn in
+// ./pill.tsx. Nothing waiting draws nothing; what went wrong is drawn as
 // it was said. The forks are ground's, for they are a session's identity.
 const said = atom({ plugin: 'ag', key: 'said' } as const, null)
 // What the last press came to when the node did not do it: drawn red under
@@ -21,6 +23,8 @@ const refused = atom({ plugin: 'ag', key: 'refused' } as const, null)
 // The sessions that branched from this one, as ground recorded them at the
 // fork: each stands as a row, and a click on it gives it this session's name.
 const forks = atom({ plugin: 'ag', key: 'forks' } as const, null)
+// What of the pills is pressed: kept here, so a redraw forgets none of it.
+const view = atom({ plugin: 'ag', key: 'view' } as const, null)
 
 // Every press and what it came to, written where it can be read from outside.
 const PRESSES = '/Users/s.b.vanhouten/.local/state/ug/ag-presses'
@@ -53,14 +57,14 @@ export function linesOf(did: string, all: Kept[]): Line[] {
   for (const one of all)
     if (one.did === did)
       for (const w of one.waiting)
-        if (!approval(w)) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), who: w.from, says: w.says, id: w.id })
+        if (!approval(w)) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), at: one.due, who: w.from, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
       if (w.from_did === did && !approval(w))
-        lines.push({ way: 'out', to: one.did, due: clockOf(one.due), who: one.to, says: w.says, id: w.id })
+        lines.push({ way: 'out', to: one.did, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (approval(w)) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), who: '', says: w.says, id: w.id })
+      if (approval(w)) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), at: w.at, who: '', says: w.says, id: w.id })
   return lines
 }
 
@@ -157,9 +161,10 @@ function untilOf(hhmm: string): string {
 function askOf(d: Press): [string, Record<string, string>] {
   const body: Record<string, string> = { to: d.to }
   // One thing approved or denied by its own id.
-  if ((d.act === 'cancel' || d.act === 'release') && d.id) body.id = d.id
-  if (d.act === 'hold' && d.until) body.until = untilOf(d.until)
-  if (d.act === 'release' && d.says !== undefined) body.says = d.says
+  if ((d.act === 'cancel' || d.act === 'release' || d.act === 'edit') && d.id) body.id = d.id
+  // A time a pill moved is the whole time; HH:MM is the next time this clock reads it.
+  if (d.act === 'hold' && d.until) body.until = d.until.includes('T') ? d.until : untilOf(d.until)
+  if ((d.act === 'release' || d.act === 'edit') && d.says !== undefined) body.says = d.says
   return [`/api/collected/${d.act}`, body]
 }
 
@@ -185,9 +190,6 @@ async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
   }
   return `${path}: ag was not paired with your finger`
 }
-
-// What a press posted, as the press it is.
-type Press = { act: string; to: string; id?: string; until?: string; says?: string }
 
 // The ground command a press is: what is pressed, on whom, and what it carries.
 function argvOf(d: Press): string[] {
@@ -216,6 +218,36 @@ async function press($: EngineInterface, d: Press, sessionId: string) {
   return r.exitCode === 0
 }
 
+// "and it gets the name and is the active session at the same time"
+// A press on the row of sessions that branched from this one. The switch goes
+// first, and the name follows only a session the person can be in: one running
+// in the background is opened elsewhere, and what Claude Code said of it stands
+// under the pills. Taking the name back to this session switches nothing.
+async function named($: EngineInterface, act: 'take' | 'give' | 'open', to: string, sessionId: string) {
+  if (act === 'open') {
+    // "I PRESSED IT, I AM HUMAN, THE INTENT IT FOR IT TO HAVE IT"
+    // The click is the decision: the name goes. Only the switch waits, on
+    // a session open in another window, and how to get there is said.
+    const gave = await press($, { act: 'give', to }, sessionId)
+    if (gave) await update($, refused, () => `the name is that session's now; it is open in another window: \`claude attach ${to.slice(0, 8)}\``)
+  } else if (act === 'give') {
+    let said = ''
+    try {
+      said = (await $.command.run({ command: 'resume', args: to })).text ?? ''
+    } catch (err) {
+      said = `/resume ${to} was not run: ${String(err)}`
+    }
+    if (said.includes('running in the background') || said.includes('was not run')) {
+      await update($, refused, () => `the name stays here: ${said}`)
+    } else {
+      await press($, { act: 'give', to }, sessionId)
+    }
+  } else {
+    await press($, { act: 'give', to }, sessionId)
+  }
+  await ask($, sessionId)
+}
+
 export const register: Register = on => {
   let sessionId = ''
 
@@ -227,53 +259,40 @@ export const register: Register = on => {
     return started
   })
 
-  on('ui.message', async ($, e, next) => {
-    const d = e.data as Partial<Press>
-    if (!d.act || !d.to) return next(e)
-    // "and it gets the name and is the active session at the same time"
-    // The switch goes first, and the name follows only a session the person
-    // can be in: one running in the background is opened elsewhere, and what
-    // Claude Code said of it stands under the rows. Taking the name back to
-    // this session switches nothing.
-    if (d.act === 'open') {
-      // "I PRESSED IT, I AM HUMAN, THE INTENT IT FOR IT TO HAVE IT"
-      // The click is the decision: the name goes. Only the switch waits, on
-      // a session open in another window, and how to get there is said.
-      const gave = await press($, { ...d, act: 'give' } as Press, sessionId)
-      if (gave) await update($, refused, () => `the name is that session's now; it is open in another window: \`claude attach ${d.to.slice(0, 8)}\``)
-    } else if (d.act === 'give') {
-      let said = ''
-      try {
-        said = (await $.command.run({ command: 'resume', args: d.to })).text ?? ''
-      } catch (err) {
-        said = `/resume ${d.to} was not run: ${String(err)}`
-      }
-      if (said.includes('running in the background') || said.includes('was not run')) {
-        await update($, refused, () => `the name stays here: ${said}`)
-      } else {
-        await press($, d as Press, sessionId)
-      }
-    } else if (d.act === 'take') {
-      await press($, { ...d, act: 'give' } as Press, sessionId)
-    } else {
-      await press($, d as Press, sessionId)
-    }
-    await ask($, sessionId)
-    return next(e)
-  })
-
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const now = await read($, said)
     const why = await read($, refused)
     const branched = (await read($, forks)) ?? { name: '', here: true, forks: [] }
+    const pressed: View = (await read($, view)) ?? {}
     if (now === null || (now.ok && now.lines.length === 0 && branched.forks.length === 0 && why === null)) return next(e)
-    const { Box, Text, Client } = $.ui.resolve(e)
+    const { Box, Text, Button, Input } = $.ui.resolve(e)
     if (!now.ok) return <Box><Text color="red">{now.text}</Text></Box>
     return (
       <Box flexDirection="column">
-        <Client key="lines" module="./lines.tsx" props={{ lines: now.lines, forks: branched.forks, name: branched.name, here: branched.here }} />
+        {pills({ Box, Text, Button, Input }, {
+          lines: now.lines,
+          forks: branched.forks,
+          name: branched.name,
+          here: branched.here,
+          view: pressed,
+          now: await $.clock.now(),
+          clock: () => $.clock.now(),
+          set: pressedNow => update($, view, () => pressedNow),
+          // What was armed, edited or moved is done with once it is asked.
+          act: async press => {
+            const until = { ...pressed.until }
+            delete until[press.to]
+            await update($, view, () => ({ open: pressed.open, until }))
+            await ask$(press)
+          },
+          named: (act, to) => named($, act, to, sessionId),
+        })}
         {why === null ? null : <Text color="red">{why}</Text>}
       </Box>
     )
+    async function ask$(d: Press) {
+      await press($, d, sessionId)
+      await ask($, sessionId)
+    }
   })
 }

@@ -6,10 +6,16 @@ export type Line = {
   way: 'in' | 'out' | 'approve'
   to: string
   due: string
+  // When it is due, RFC3339: what a pill says, and what -1h and +1h move.
+  at?: string
   who: string
   says: string
   id: string
 }
+
+// What of the pills is pressed: the one open, the press armed and when, the
+// time each collection was moved to and not yet held at, the message edited.
+export type View = { open?: string; armed?: { id: string; at: number }; until?: Record<string, string>; editing?: string }
 
 // What `ground collected json` last said for this session: the lines it
 // holds, or, when it is no answer of the node's, what went wrong (ok false).
@@ -24,6 +30,6 @@ export type Forks = { name: string; here: boolean; forks: Fork[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    ag: { said: Said | null; refused: string | null; forks: Forks | null }
+    ag: { said: Said | null; refused: string | null; forks: Forks | null; view: View | null }
   }
 }
