@@ -32,7 +32,11 @@ const PRESSES = '/Users/s.b.vanhouten/.local/state/ug/ag-presses'
 const EVERY_MS = 5000
 
 // One collection as laye keeps it, and mycelia keeps laye's answer whole.
+// A collection is what one agent (from) said to one other (to), with its own id and time.
 type Kept = {
+  id?: string
+  from?: string
+  from_did?: string
   to: string
   did: string
   due: string
@@ -57,14 +61,14 @@ export function linesOf(did: string, all: Kept[]): Line[] {
   for (const one of all)
     if (one.did === did)
       for (const w of one.waiting)
-        if (!approval(w)) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), at: one.due, who: w.from, says: w.says, id: w.id })
+        if (!approval(w)) lines.push({ way: 'in', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.from || w.from, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
       if (w.from_did === did && !approval(w))
-        lines.push({ way: 'out', to: one.did, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id })
+        lines.push({ way: 'out', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (approval(w)) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), at: w.at, who: '', says: w.says, id: w.id })
+      if (approval(w)) lines.push({ way: 'approve', to: one.did, collection: one.id, due: clockOf(w.at), at: w.at, who: '', says: w.says, id: w.id })
   return lines
 }
 
@@ -160,8 +164,8 @@ function untilOf(hhmm: string): string {
 // The node's path and body for a press, as ground collected asked them.
 function askOf(d: Press): [string, Record<string, string | string[]>] {
   const body: Record<string, string | string[]> = { to: d.to }
-  // What one agent sent, of a collection several sent into.
-  if (d.act === 'release' && d.ids) body.ids = d.ids
+  // The one collection the press is on.
+  if (d.collection) body.collection = d.collection
   // One thing approved or denied by its own id.
   if ((d.act === 'cancel' || d.act === 'release' || d.act === 'edit') && d.id) body.id = d.id
   // A time a pill moved is the whole time; HH:MM is the next time this clock reads it.
@@ -283,7 +287,7 @@ export const register: Register = on => {
           // What was armed, edited or moved is done with once it is asked.
           act: async press => {
             const until = { ...pressed.until }
-            delete until[press.to]
+            delete until[press.collection ?? '']
             await update($, view, () => ({ open: pressed.open, until }))
             await ask$(press)
           },

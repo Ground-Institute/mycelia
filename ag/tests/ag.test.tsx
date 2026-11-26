@@ -7,10 +7,10 @@ const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
 // and one out, and the session's own DID mycelia read from its key.
 const ME = 'did:key:z6MkMe'
 const KEPT = JSON.stringify({ collected: [
-  { to: 'Mycelia', did: ME, due: at(15, 40), waiting: [
+  { id: 'c-in', from: 'Shiitake', from_did: 'did:key:z6MkOther', to: 'Mycelia', did: ME, due: at(15, 40), waiting: [
     { id: '871588189c2ca9c4', from: 'Shiitake', says: 'hello', at: at(9, 40), from_did: 'did:key:z6MkOther' },
   ] },
-  { to: 'Shiitake', did: 'did:key:z6MkOther', due: at(16, 0), waiting: [
+  { id: 'c-out', from: 'Mycelia', from_did: ME, to: 'Shiitake', did: 'did:key:z6MkOther', due: at(16, 0), waiting: [
     { id: 'a2adff460cd772b0', from: 'Mycelia', says: 'Mycelia here', at: at(10, 0), from_did: ME },
   ] },
 ] })
@@ -56,8 +56,8 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], 
   })
 }
 
-const IN = 'in:did:key:z6MkMe:Shiitake'
-const OUT = 'out:did:key:z6MkOther'
+const IN = 'c-in'
+const OUT = 'c-out'
 const HELLO = '871588189c2ca9c4'
 const SECRET = 'a'.repeat(64)
 
@@ -86,16 +86,19 @@ test('what waits stands as a line of pills above the prompt: when, which way, wh
   await ui.unmount()
 })
 
-test('the pills are one line, the soonest first, a day not today before its time; what several agents sent is a pill each', async ($, on) => {
+// "the fact that we dont do full collections per session anyore"
+test('the pills are one line, the soonest first, a day not today before its time; each pair is its own pill with its own time', async ($, on) => {
   const asked: Asked[] = []
   const tomorrow = new Date(2026, 10, 15, 12, 24).toISOString()
   const kept = JSON.stringify({ collected: [
-    { to: 'Window', did: 'did:key:z6MkWindow', due: tomorrow, waiting: [
+    { id: 'c-window', from: 'Mycelia', from_did: ME, to: 'Window', did: 'did:key:z6MkWindow', due: tomorrow, waiting: [
       { id: 'w1', from: 'Mycelia', says: 'for Window', at: at(10, 0), from_did: ME },
     ] },
-    { to: 'Mycelia', did: ME, due: at(17, 35), waiting: [
-      { id: 'r1', from: 'Rowan', says: 'from Rowan', at: at(9, 40), from_did: 'did:key:z6MkRowan' },
+    { id: 'c-vfx', from: 'vfxstreet', from_did: 'did:key:z6MkVfx', to: 'Mycelia', did: ME, due: at(18, 10), waiting: [
       { id: 'v1', from: 'vfxstreet', says: 'from outside', at: at(9, 41), from_did: 'did:key:z6MkVfx' },
+    ] },
+    { id: 'c-rowan', from: 'Rowan', from_did: 'did:key:z6MkRowan', to: 'Mycelia', did: ME, due: at(17, 35), waiting: [
+      { id: 'r1', from: 'Rowan', says: 'from Rowan', at: at(9, 40), from_did: 'did:key:z6MkRowan' },
       { id: 'r2', from: 'Rowan', says: 'Rowan again', at: at(9, 42), from_did: 'did:key:z6MkRowan' },
     ] },
   ] })
@@ -103,12 +106,12 @@ test('the pills are one line, the soonest first, a day not today before its time
   const ui = await mounted($)
 
   const line = (await ui.findAll({ type: 'Button' })).map(b => b.text)
-  expect(line).toEqual(['17:35<-[Rowan]', '17:35<-[vfxstreet]', '11-15.12:24->[Window]'])
-  // What Rowan sent is released by itself: the outside agent's stays.
-  await ui.press({ key: `pill:in:${ME}:Rowan` })
-  await ui.press({ key: `now:in:${ME}:Rowan` })
-  await ui.press({ key: `now:in:${ME}:Rowan` })
-  expect(asked).toContainEqual(['/api/collected/release', SECRET, `{"to":"${ME}","ids":["r1","r2"]}`])
+  expect(line).toEqual(['17:35<-[Rowan]', '18:10<-[vfxstreet]', '11-15.12:24->[Window]'])
+  // What Rowan said is released by itself, by its own collection.
+  await ui.press({ key: 'pill:c-rowan' })
+  await ui.press({ key: 'now:c-rowan' })
+  await ui.press({ key: 'now:c-rowan' })
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, `{"to":"${ME}","collection":"c-rowan"}`])
   await ui.unmount()
 })
 
@@ -137,7 +140,7 @@ test('a message is edited in the engine\'s own field, holding what it says, and 
   const field = await ui.find({ type: 'Input', key: `says:${HELLO}` })
   expect(field?.props.value).toBe('hello')
   await ui.input({ key: `says:${HELLO}`, text: 'hello, edited' })
-  expect(asked).toContainEqual(['/api/collected/edit', SECRET, `{"to":"did:key:z6MkMe","id":"${HELLO}","says":"hello, edited"}`])
+  expect(asked).toContainEqual(['/api/collected/edit', SECRET, `{"to":"did:key:z6MkMe","collection":"c-in","id":"${HELLO}","says":"hello, edited"}`])
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
   // Saved, the field is gone and the pill is still open.
   expect(await ui.find({ type: 'Input', key: `says:${HELLO}` })).toBeUndefined()
@@ -160,7 +163,7 @@ test('a time is moved on for days, says its day, and is held where it was moved 
   expect(holds().length).toBe(0)
   expect((await ui.find({ type: 'Button', key: `hold:${IN}` }))?.text).toBe('[hold until 11-16.16:35]')
   await ui.press({ key: `hold:${IN}` })
-  expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","until":"${new Date(2026, 10, 16, 16, 35).toISOString().replace('.000Z', 'Z')}"}`])
+  expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${new Date(2026, 10, 16, 16, 35).toISOString().replace('.000Z', 'Z')}"}`])
   // Held, there is nothing left to hold until it is moved again.
   expect(await ui.find({ type: 'Button', key: `hold:${IN}` })).toBeUndefined()
   await ui.unmount()
@@ -182,10 +185,10 @@ test('now and delete take two presses: the first arms and says what the second d
   expect((await ui.find({ type: 'Text', text: '[again: delete this one]' }))?.props.color).toBe('red')
   expect((await ui.find({ type: 'Button', key: `now:${IN}` }))?.text).toBe('[now]')
   await ui.press({ key: `delete:${HELLO}` })
-  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, `{"to":"did:key:z6MkMe","id":"${HELLO}"}`])
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, `{"to":"did:key:z6MkMe","collection":"c-in","id":"${HELLO}"}`])
   await ui.press({ key: `now:${IN}` })
   await ui.press({ key: `now:${IN}` })
-  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe"}'])
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
   await ui.unmount()
 })
 
@@ -202,7 +205,7 @@ test('an armed press waits five seconds for its second: after that, a press arms
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
   await clock.advance(1000)
   await ui.press({ key: `now:${IN}` })
-  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe"}'])
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
   await ui.unmount()
 })
 
@@ -240,7 +243,7 @@ test('what the node refuses is said in red under the pills, and the pill stays o
 test('an approval is the thing itself: approve twice approves it, deny twice denies it, by its own id', async ($, on) => {
   const asked: Asked[] = []
   const kept = JSON.stringify({ collected: [
-    { to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
+    { id: 'c-ramen', from: 'ramen', from_did: 'did:key:z6MkRamen', to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
       { id: 'r1', from: 'ramen', says: "REACH is 'lines:scene' of TOKEN on kapteyn, for ramen", at: at(9, 40), from_did: 'did:key:z6MkRamen', reach: {} },
       { id: 'k1', from: 'ramen', says: 'admit the key of ramen', at: at(9, 41), from_did: 'did:key:z6MkRamen', admit: {} },
     ] },
@@ -253,10 +256,10 @@ test('an approval is the thing itself: approve twice approves it, deny twice den
   expect((await ui.find({ type: 'Text', text: '[again: approve]' }))?.props.color).toBe('green')
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
   await ui.press({ key: 'approve:r1' })
-  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkRamen","id":"r1"}'])
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkRamen","collection":"c-ramen","id":"r1"}'])
   await ui.press({ key: 'deny:k1' })
   await ui.press({ key: 'deny:k1' })
-  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, '{"to":"did:key:z6MkRamen","id":"k1"}'])
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, '{"to":"did:key:z6MkRamen","collection":"c-ramen","id":"k1"}'])
   await ui.unmount()
 })
 

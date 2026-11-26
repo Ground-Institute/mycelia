@@ -16,7 +16,8 @@ import type { Fork, Line, View } from '../types'
 type Table = { Box: any; Text: any; Button: any; Input: any }
 
 // What a press asks of the node: the act, on whom, and what it carries.
-export type Press = { act: string; to: string; id?: string; ids?: string[]; until?: string; says?: string }
+// `collection` is the one acted on: without it the node acts on every one it holds for `to`.
+export type Press = { act: string; to: string; collection?: string; id?: string; until?: string; says?: string }
 
 // What the pills are given: what to draw, and what a press does.
 export type Given = {
@@ -41,23 +42,22 @@ const NO = 'red'
 // "17:35<-[Rowan] 18:32->[Keeper] 11-29.12:24->[Window] 11-29.13:45<-Noah[vfxstreet]"
 // "click on a pill to expand, it and then interact with it."
 //
-// One pill: what one agent said to this session, or what this session said to
-// one agent, and when it is due. `whole` is whether it is all its collection
-// holds: what comes in from several agents is one collection, a pill each.
-type Pill = { key: string; way: 'in' | 'out'; to: string; who: string; at: string; lines: Line[]; whole: boolean }
+// "the fact that we dont do full collections per session anyore"
+//
+// One pill is one collection: what one agent said to one other, with its own
+// time (laye collected.rs, "A collection is its own"). In is what was said to
+// this session, out what this session said.
+type Pill = { key: string; way: 'in' | 'out'; to: string; who: string; at: string; lines: Line[] }
 
 // The pills, the soonest first.
 function pillsOf(lines: Line[]): Pill[] {
   const pills: Pill[] = []
   for (const line of lines) {
     if (line.way === 'approve') continue
-    const key = line.way === 'in' ? `in:${line.to}:${line.who}` : `out:${line.to}`
-    const held = pills.find(p => p.key === key)
+    const held = pills.find(p => p.key === line.collection)
     if (held) held.lines.push(line)
-    else pills.push({ key, way: line.way, to: line.to, who: line.who, at: line.at ?? '', lines: [line], whole: true })
+    else pills.push({ key: line.collection ?? '', way: line.way, to: line.to, who: line.who, at: line.at ?? '', lines: [line] })
   }
-  for (const pill of pills)
-    pill.whole = lines.filter(l => l.way === pill.way && l.to === pill.to).length === pill.lines.length
   const time = (at: string) => Date.parse(at) || Number.MAX_SAFE_INTEGER
   return pills.sort((a, b) => time(a.at) - time(b.at))
 }
@@ -152,9 +152,9 @@ export function pills(table: Table, given: Given) {
   // An approval is the thing itself, with its two presses beside it.
   const approval = (line: Line) => (
     <Box key={`approve:${line.id}`} flexDirection="row">
-      {twice(`approve:${line.id}`, 'approve', 'approve', YES, () => act({ act: 'release', to: line.to, id: line.id }))}
+      {twice(`approve:${line.id}`, 'approve', 'approve', YES, () => act({ act: 'release', to: line.to, collection: line.collection, id: line.id }))}
       {gap}
-      {twice(`deny:${line.id}`, 'deny', 'deny', NO, () => act({ act: 'cancel', to: line.to, id: line.id }))}
+      {twice(`deny:${line.id}`, 'deny', 'deny', NO, () => act({ act: 'cancel', to: line.to, collection: line.collection, id: line.id }))}
       {gap}
       <Text bold wrap="truncate">{line.says}</Text>
     </Box>
@@ -171,7 +171,7 @@ export function pills(table: Table, given: Given) {
             value={line.says}
             rows={Math.min(8, Math.max(2, line.says.split('\n').length))}
             submitLabel="save"
-            onSubmit={(says: string) => act({ act: 'edit', to: pill.to, id: line.id, says })}
+            onSubmit={(says: string) => act({ act: 'edit', to: pill.to, collection: pill.key, id: line.id, says })}
           />
           {once(`edit-off:${line.id}`, 'esc', () => set({ ...view, editing: undefined }))}
         </Box>
@@ -182,7 +182,7 @@ export function pills(table: Table, given: Given) {
         <Box flexShrink={0} flexDirection="row">
           {once(`edit:${line.id}`, 'edit', () => set({ ...view, editing: line.id, armed: undefined }))}
           {gap}
-          {twice(`delete:${line.id}`, 'delete', 'delete this one', NO, () => act({ act: 'cancel', to: pill.to, id: line.id }))}
+          {twice(`delete:${line.id}`, 'delete', 'delete this one', NO, () => act({ act: 'cancel', to: pill.to, collection: pill.key, id: line.id }))}
           {gap}
           <Text bold>{line.who}</Text>
           <Text>: </Text>
@@ -203,17 +203,11 @@ export function pills(table: Table, given: Given) {
     </Box>
   )
 
-  // Each of a pill's own, one after the other: what several agents sent is
-  // one collection, and a pill that is not the whole of it acts on its own.
-  const each = (p: Pill, one: (id: string) => Press) => async () => {
-    for (const line of p.lines) await act(one(line.id))
-  }
-
   // What the open pill holds, under the line of pills.
   const held = (p: Pill) => {
-    const until = view.until?.[p.to]
+    const until = view.until?.[p.key]
     const nudge = (id: string, title: string, minutes: number) =>
-      once(`${id}:${p.key}`, title, () => p.at && set({ ...view, armed: undefined, until: { ...view.until, [p.to]: moved(until ?? p.at, minutes) } }))
+      once(`${id}:${p.key}`, title, () => p.at && set({ ...view, armed: undefined, until: { ...view.until, [p.key]: moved(until ?? p.at, minutes) } }))
     return (
       <Box key={`held:${p.key}`} flexDirection="column">
         <Box key="when" flexDirection="row">
@@ -222,14 +216,14 @@ export function pills(table: Table, given: Given) {
           {until === undefined ? (
             <Text dimColor>{whenOf(p.at, now)}</Text>
           ) : (
-            once(`hold:${p.key}`, `hold until ${whenOf(until, now)}`, () => act({ act: 'hold', to: p.to, until }))
+            once(`hold:${p.key}`, `hold until ${whenOf(until, now)}`, () => act({ act: 'hold', to: p.to, collection: p.key, until }))
           )}
           {gap}
-          {twice(`now:${p.key}`, 'now', 'release now', YES, () => act(p.whole ? { act: 'release', to: p.to } : { act: 'release', to: p.to, ids: p.lines.map(l => l.id) }))}
+          {twice(`now:${p.key}`, 'now', 'release now', YES, () => act({ act: 'release', to: p.to, collection: p.key }))}
           {gap}
-          {once(`later:${p.key}`, 'later', () => act({ act: 'later', to: p.to }))}
+          {once(`later:${p.key}`, 'later', () => act({ act: 'later', to: p.to, collection: p.key }))}
           {gap}
-          {twice(`delete:${p.key}`, 'delete', 'delete all of it', NO, p.whole ? () => act({ act: 'cancel', to: p.to }) : each(p, id => ({ act: 'cancel', to: p.to, id })))}
+          {twice(`delete:${p.key}`, 'delete', 'delete all of it', NO, () => act({ act: 'cancel', to: p.to, collection: p.key }))}
         </Box>
         {p.lines.map(line => message(p, line))}
       </Box>

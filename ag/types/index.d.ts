@@ -8,6 +8,8 @@ export type Line = {
   due: string
   // When it is due, RFC3339: what a pill says, and what -1h and +1h move.
   at?: string
+  // The collection it is in, by the id laye names it by: what a press is on.
+  collection?: string
   who: string
   says: string
   id: string
