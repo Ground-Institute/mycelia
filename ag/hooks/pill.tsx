@@ -215,7 +215,7 @@ export function pills(given: Given): Drawn {
         { text: line.says, dim: true, rest: true },
       ])
       // "Getting A2UI pieces to show up in another session from this one"
-      // The surface said beside it stands under it, a row of the screen a line.
+      // 「[Opus 5.5] The surface said beside it stands under it, a row of the screen a line.」
       if (line.a2ui?.length) for (const text of surfaceLines(line.a2ui)) rows.push([{ text: `    ${text}` }])
       // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
       // Edited in the engine's own field, holding what it says: Enter saves
