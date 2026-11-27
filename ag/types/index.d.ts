@@ -13,6 +13,8 @@ export type Line = {
   who: string
   says: string
   id: string
+  // The A2UI messages said beside it, as laye keeps them: drawn under it open.
+  a2ui?: unknown[]
 }
 
 // A time moved by +- and not yet held: on whom, the time, when it was last
