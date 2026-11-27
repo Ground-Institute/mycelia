@@ -1,24 +1,24 @@
 // "Getting A2UI pieces to show up in another session from this one"
 // "i expect my own workflow to not change"
 //
-// What an agent said beside its words as A2UI v1.0 (laye keeps it as the
-// message's a2ui), drawn as lines of text under the message in the open pill.
-// The messages are applied in the order said, as A2UI over A2A has a renderer
-// do (Ground-Institute/laye parity/a2ui_v1.0_36725ee): createSurface,
-// updateComponents, updateDataModel, deleteSurface. Each surface is drawn from
-// its root. Text and layout are drawn: Text, Row, Column, List. Anything else
-// is said not to be drawn yet, as nothing pressed on a surface goes back yet.
+// 「[Opus 5.5] What an agent said beside its words as A2UI v1.0 (laye keeps it as the」
+// 「[Opus 5.5] message's a2ui), drawn as lines of text under the message in the open pill.」
+// 「[Opus 5.5] The messages are applied in the order said, as A2UI over A2A has a renderer」
+// 「[Opus 5.5] do (Ground-Institute/laye parity/a2ui_v1.0_36725ee): createSurface,」
+// 「[Opus 5.5] updateComponents, updateDataModel, deleteSurface. Each surface is drawn from」
+// 「[Opus 5.5] its root. Text and layout are drawn: Text, Row, Column, List. Anything else」
+// 「[Opus 5.5] is said not to be drawn yet, as nothing pressed on a surface goes back yet.」
 
 type Component = { id: string; component: string; [key: string]: unknown }
 type Surface = { id: string; components: Map<string, Component>; data: unknown }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
-// A JSON Pointer's keys, each unescaped: ~1 is /, then ~0 is ~.
+// 「[Opus 5.5] A JSON Pointer's keys, each unescaped: ~1 is /, then ~0 is ~.」
 const keysOf = (pointer: string): string[] =>
   pointer.split('/').filter(Boolean).map(k => k.split('~1').join('/').split('~0').join('~'))
 
-// A value in the data model, by its JSON Pointer.
+// 「[Opus 5.5] A value in the data model, by its JSON Pointer.」
 function at(data: unknown, pointer: string): unknown {
   let here = data
   for (const key of keysOf(pointer)) {
@@ -29,7 +29,7 @@ function at(data: unknown, pointer: string): unknown {
   return here
 }
 
-// The data model with value put at the pointer; the whole of it at none.
+// 「[Opus 5.5] The data model with value put at the pointer; the whole of it at none.」
 function put(data: unknown, pointer: string | undefined, value: unknown): unknown {
   const keys = keysOf(pointer ?? '')
   if (keys.length === 0) return value
@@ -44,8 +44,8 @@ function put(data: unknown, pointer: string | undefined, value: unknown): unknow
   return root
 }
 
-// What a string a component holds says: itself, or what the data model holds
-// where it points.
+// 「[Opus 5.5] What a string a component holds says: itself, or what the data model holds」
+// 「[Opus 5.5] where it points.」
 function said(v: unknown, data: unknown): string {
   if (typeof v === 'string') return v
   if (isObject(v) && typeof v['@path'] === 'string') {
@@ -56,7 +56,7 @@ function said(v: unknown, data: unknown): string {
   return ''
 }
 
-// Lines side by side, each column as wide as its widest line.
+// 「[Opus 5.5] Lines side by side, each column as wide as its widest line.」
 function beside(columns: string[][]): string[] {
   const height = Math.max(0, ...columns.map(c => c.length))
   const widths = columns.map(c => Math.max(0, ...c.map(l => l.length)))
@@ -66,7 +66,7 @@ function beside(columns: string[][]): string[] {
   return lines
 }
 
-// One component and what it holds, as lines.
+// 「[Opus 5.5] One component and what it holds, as lines.」
 function drawn(surface: Surface, id: string, seen: Set<string>): string[] {
   const c = surface.components.get(id)
   if (!c) return [`[no component ${id} on ${surface.id}]`]
@@ -98,8 +98,8 @@ function drawn(surface: Surface, id: string, seen: Set<string>): string[] {
   }
 }
 
-// Every surface the messages leave standing, drawn from its root, as lines;
-// and what of the messages could not be applied, said where it stands.
+// 「[Opus 5.5] Every surface the messages leave standing, drawn from its root, as lines;」
+// 「[Opus 5.5] and what of the messages could not be applied, said where it stands.」
 export function surfaceLines(messages: unknown[]): string[] {
   const surfaces = new Map<string, Surface>()
   const lines: string[] = []
