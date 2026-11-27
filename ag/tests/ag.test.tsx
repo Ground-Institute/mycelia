@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 // A time on this clock, as laye keeps it: RFC3339.
 const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
@@ -7,10 +7,10 @@ const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
 // and one out, and the session's own DID mycelia read from its key.
 const ME = 'did:key:z6MkMe'
 const KEPT = JSON.stringify({ collected: [
-  { to: 'Mycelia', did: ME, due: at(15, 40), waiting: [
+  { id: 'c-in', from: 'Shiitake', from_did: 'did:key:z6MkOther', to: 'Mycelia', did: ME, due: at(15, 40), waiting: [
     { id: '871588189c2ca9c4', from: 'Shiitake', says: 'hello', at: at(9, 40), from_did: 'did:key:z6MkOther' },
   ] },
-  { to: 'Shiitake', did: 'did:key:z6MkOther', due: at(16, 0), waiting: [
+  { id: 'c-out', from: 'Mycelia', from_did: ME, to: 'Shiitake', did: 'did:key:z6MkOther', due: at(16, 0), waiting: [
     { id: 'a2adff460cd772b0', from: 'Mycelia', says: 'Mycelia here', at: at(10, 0), from_did: ME },
   ] },
 ] })
@@ -26,8 +26,12 @@ const BAND = {
 // What mycelia was asked over its socket, as [path, secret, body]; a fake
 // mycelia that pairs once and does every press.
 type Asked = [string, string, string]
-function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT) {
-  on('clock.now', () => ({ value: 0 }))
+// This clock while the tests run: the day of what is kept, at 15:00.
+const NOW = new Date(2026, 10, 14, 15, 0).getTime()
+
+// refuses: what mycelia answers a press with, in place of doing it.
+function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT, clocked = false, refuses = '') {
+  if (!clocked) on('clock.now', () => ({ value: NOW }))
   on('fs.write', () => ({ value: {} }))
   on('http.fetch', (_, e) => {
     const path = e.url.replace('http://mycelia', '')
@@ -35,170 +39,361 @@ function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], 
     asked.push([path, headers['X-Ag-Secret'] ?? '', String(e.init?.body ?? '')])
     const text = path === '/pair' ? '200\n' + 'a'.repeat(64)
       : path === '/collected' ? `200\n${ME}\n1000\n${kept}`
-      : '200\n{}'
+      : refuses ? `409\n${refuses}` : '200\n{}'
     return { value: { status: 200, ok: true, headers: {}, text } }
   })
 }
 
-function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], answer = ANSWER, asked: Asked[] = []) {
-  mycelia(on, asked, answer)
+// clocked: the test answers $.clock itself, with mock.clock.
+function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], answer = ANSWER, asked: Asked[] = [], clocked = false, refuses = '') {
+  mycelia(on, asked, answer, clocked, refuses)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
-  on('clock.every', () => ({ value: {} }))
+  if (!clocked) on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => {
     ran.push([...e.argv])
     return { value: { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' } }
   })
 }
 
-test('each message goes to the Client as a line: when, which way, who, what is said', async ($, on) => {
+const IN = 'c-in'
+const OUT = 'c-out'
+const HELLO = '871588189c2ca9c4'
+const SECRET = 'a'.repeat(64)
+
+type Ui = Awaited<ReturnType<typeof mounted>>
+
+async function mounted($: Parameters<Parameters<typeof test>[1]>[0]) {
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+  return $.ui.mount({ ...BAND, surface: 'terminal' })
+}
+
+// The mouse going down on the piece whose press this is.
+const press = (ui: Ui, key: string) => ui.post({ press: key }, { in: 'pills' })
+// Every piece drawn, in order.
+const pieces = async (ui: Ui) => ui.findAll({ in: 'pills', type: 'Text' })
+// The pieces from the first saying `from` up to the last saying `upTo`, joined.
+async function rowOf(ui: Ui, from: string, upTo: string) {
+  const all = (await pieces(ui)).map(t => t.text)
+  return all.slice(all.indexOf(from), all.lastIndexOf(upTo) + 1).join('')
+}
+// Whether a piece saying exactly this is drawn.
+const has = async (ui: Ui, text: string) => (await pieces(ui)).some(t => t.text === text)
+// What the nth piece saying exactly this wears.
+const worn = async (ui: Ui, text: string, nth = 0) => {
+  const t = (await pieces(ui)).filter(x => x.text === text)[nth]
+  return [t?.props.backgroundColor, t?.props.color]
+}
+
+// "IN ELEMENTS THERE IS THE CHAT"
+// "IT HAS PILLS"
+// "WHY CANT IT BE LIKE THAT"
+// "17:35<-[Rowan] 18:32->[Keeper] 11-29.12:24->[Window] 11-29.13:45<-Noah[vfxstreet]"
+test('what waits stands as a line of pills above the prompt: when, which way, who', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
   engine(on, ran, ANSWER, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const ui = await mounted($)
 
-  const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ lines: [
-    { way: 'in', to: 'did:key:z6MkMe', due: '15:40', who: 'Shiitake', says: 'hello', id: '871588189c2ca9c4' },
-    { way: 'out', to: 'did:key:z6MkOther', due: '16:00', who: 'Shiitake', says: 'Mycelia here', id: 'a2adff460cd772b0' },
-  ], forks: [], name: '', here: true })
+  expect((await pieces(ui)).map(t => t.text).join('')).toBe('15:40<-[Shiitake] 16:00->[Shiitake] ')
   // Asked of mycelia, by the session's own id; ground is asked only for the forks.
-  expect(asked).toContainEqual(['/collected', 'a'.repeat(64), '{"session":"sid"}'])
+  expect(asked).toContainEqual(['/collected', SECRET, '{"session":"sid"}'])
   expect(ran.every(argv => argv[1] === 'forks')).toBe(true)
   await ui.unmount()
 })
 
-// "yes, build that"
-test('a press is asked of mycelia directly, with the secret the first one paired with a finger', async ($, on) => {
-  const ran: string[][] = []
+// "the fact that we dont do full collections per session anyore"
+test('the pills are one line, the soonest first, a day not today before its time; each pair is its own pill with its own time', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, ran, ANSWER, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const tomorrow = new Date(2026, 10, 15, 12, 24).toISOString()
+  const kept = JSON.stringify({ collected: [
+    { id: 'c-window', from: 'Mycelia', from_did: ME, to: 'Window', did: 'did:key:z6MkWindow', due: tomorrow, waiting: [
+      { id: 'w1', from: 'Mycelia', says: 'for Window', at: at(10, 0), from_did: ME },
+    ] },
+    { id: 'c-vfx', from: 'vfxstreet', from_did: 'did:key:z6MkVfx', to: 'Mycelia', did: ME, due: at(18, 10), waiting: [
+      { id: 'v1', from: 'vfxstreet', says: 'from outside', at: at(9, 41), from_did: 'did:key:z6MkVfx' },
+    ] },
+    { id: 'c-rowan', from: 'Rowan', from_did: 'did:key:z6MkRowan', to: 'Mycelia', did: ME, due: at(17, 35), waiting: [
+      { id: 'r1', from: 'Rowan', says: 'from Rowan', at: at(9, 40), from_did: 'did:key:z6MkRowan' },
+      { id: 'r2', from: 'Rowan', says: 'Rowan again', at: at(9, 42), from_did: 'did:key:z6MkRowan' },
+    ] },
+  ] })
+  engine(on, [], kept, asked)
+  const ui = await mounted($)
 
-  await ui.post({ act: 'cancel', to: 'did:key:z6MkMe', id: '871588189c2ca9c4' }, { in: 'lines' })
-  await ui.post({ act: 'release', to: 'did:key:z6MkMe' }, { in: 'lines' })
-  await ui.post({ act: 'hold', to: 'did:key:z6MkMe', until: '17:40' }, { in: 'lines' })
-  await ui.post({ act: 'release', to: 'did:key:z6MkMe', says: 'hello, edited' }, { in: 'lines' })
-  expect(asked[0]).toEqual(['/pair', '', ''])
-  expect(asked.filter(a => a[0] === '/pair').length).toBe(1)
-  expect(asked).toContainEqual(['/api/collected/cancel', 'a'.repeat(64), '{"to":"did:key:z6MkMe","id":"871588189c2ca9c4"}'])
-  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkMe"}'])
-  expect(asked.find(a => a[0] === '/api/collected/hold')?.[2]).toMatch(/"until":"\d{4}-\d\d-\d\dT\d\d:40:00Z"/)
-  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkMe","says":"hello, edited"}'])
-  // No press goes through ground collected, which any agent can run.
-  expect(ran.some(argv => argv[1] === 'collected' && argv[2] !== 'json')).toBe(false)
+  expect((await pieces(ui)).map(t => t.text).join('')).toBe('17:35<-[Rowan] 18:10<-[vfxstreet] 11-15.12:24->[Window] ')
+  // What Rowan said is released by itself, by its own collection.
+  await press(ui, 'pill:c-rowan')
+  await press(ui, 'now:c-rowan')
+  await press(ui, 'now:c-rowan')
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, `{"to":"${ME}","collection":"c-rowan"}`])
   await ui.unmount()
 })
 
-// "+- +- [now]         [edit]              [cancel]"
+// "+- +- [now]         [edit]              [delete] [esc]"
 // "  16:25 <-- Shiitake: Some text of Shiitake to us."
-test('a message clicked in shows its buttons; esc closes them, delete twice deletes it, and so does the arrow twice', async ($, on) => {
-  const ran: string[][] = []
+// "like i said, you cant just pull thinngs from under me. it cost me energy to learn, and i expect it to hold"
+test('an open pill holds what the person knows, to the character; esc and the pill itself put it to rest', async ($, on) => {
+  engine(on, [])
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  expect(await rowOf(ui, '+', '[esc]')).toBe('+- +- [now]         [edit]              [delete] [esc]')
+  expect(await rowOf(ui, '  ', 'hello')).toBe('  15:40 <-- Shiitake: hello')
+  // "cancel should get us out of the clicked-in,"
+  await press(ui, `esc:${IN}`)
+  expect(await has(ui, '[now]')).toBe(false)
+  await press(ui, `pill:${IN}`)
+  await press(ui, `pill:${IN}`)
+  expect(await has(ui, '[now]')).toBe(false)
+  // What this session said goes the other way.
+  await press(ui, `pill:${OUT}`)
+  expect(await rowOf(ui, '  ', 'Mycelia here')).toBe('  16:00 --> Shiitake: Mycelia here')
+  await ui.unmount()
+})
+
+// "when i click it seems to select chars and copy them"
+// "and not having my mouse click be the expected action as before"
+test('a press is the mouse going down, where it always was: + and -, now at 6, edit at 20, delete at 40, esc at 49', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, ran, ANSWER, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+  const down = (x: number, y: number) => ui.pointer({ type: 'down', x, y, button: 'left' }, { in: 'pills' })
 
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^15:40$/ }))?.text).toBe('15:40')
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^Shiitake$/ }))?.props.bold).toBe(true)
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^hello$/ }))?.props.dimColor).toBe(true)
-  expect(await ui.find({ in: 'lines', type: 'Text', text: /\[esc\]/ })).toBeUndefined()
+  // The pill opens as the mouse goes down; moving and letting go do nothing more.
+  await down(3, 0)
+  await ui.pointer({ type: 'move', x: 5, y: 0, button: 'left' }, { in: 'pills' })
+  await ui.pointer({ type: 'up', x: 5, y: 0, button: 'left' }, { in: 'pills' })
+  expect(await has(ui, '[now]')).toBe(true)
+  // The row under the line of pills, at the columns it always had.
+  await down(0, 1)
+  expect(await has(ui, '16:40')).toBe(true)
+  await down(1, 1)
+  expect(await has(ui, '15:40')).toBe(true)
+  await down(3, 1)
+  expect(await has(ui, '15:45')).toBe(true)
+  await down(4, 1)
+  expect(await has(ui, '15:40')).toBe(true)
+  // Between the two +- nothing is pressed.
+  await down(2, 1)
+  expect(await has(ui, '15:40')).toBe(true)
+  await down(6, 1)
+  expect(await has(ui, '[NOW]')).toBe(true)
+  await down(20, 1)
+  expect(await ui.find({ type: 'Input', key: `says:${HELLO}` })).toBeDefined()
+  await down(20, 1)
+  expect(await ui.find({ type: 'Input', key: `says:${HELLO}` })).toBeUndefined()
+  await down(40, 1)
+  expect(await has(ui, '[DELETE]')).toBe(true)
+  // The arrow of the message, after its time: once is XXXX.
+  await down(8, 2)
+  expect(await has(ui, 'XXXX')).toBe(true)
+  await down(49, 1)
+  expect(await has(ui, '[now]')).toBe(false)
+  await clock.advance(60000)
+  expect(asked.some(a => a[0].startsWith('/api/collected/'))).toBe(false)
+  await ui.unmount()
+})
 
-  await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[delete\]$/ }))?.text).toBe('[delete]')
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /\[esc\]/ }))?.text).toBe(' [esc]')
-  // "the word cancel isnt clear"
-  await ui.pointer({ type: 'down', x: 50, y: 0, button: 'left' })
-  expect(await ui.find({ in: 'lines', type: 'Text', text: /\[esc\]/ })).toBeUndefined()
-  expect(asked.some(a => a[0] === '/api/collected/cancel')).toBe(false)
-  // "and there should be a more explicit abort, that is two stage abort"
-  await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
-  await ui.pointer({ type: 'down', x: 41, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[DELETE\]$/ }))?.props.color).toBe('red')
-  expect(asked.some(a => a[0] === '/api/collected/cancel')).toBe(false)
-  await ui.pointer({ type: 'down', x: 41, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/cancel', 'a'.repeat(64), '{"to":"did:key:z6MkMe","id":"871588189c2ca9c4"}'])
-  asked.length = 0
-  // The arrow at rest: once is XXXX, twice dismisses that one message.
-  await ui.pointer({ type: 'down', x: 7, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^XXXX$/ }))?.text).toBe('XXXX')
-  await ui.pointer({ type: 'down', x: 7, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/cancel', 'a'.repeat(64), '{"to":"did:key:z6MkMe","id":"871588189c2ca9c4"}'])
+// "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
+test('edit puts what a message says in the engine\'s own field; Enter saves it and sends nothing', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked)
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `edit:${IN}`)
+  const field = await ui.find({ type: 'Input', key: `says:${HELLO}` })
+  expect(field?.props.value).toBe('hello')
+  await ui.input({ key: `says:${HELLO}`, text: 'hello, edited' })
+  expect(asked).toContainEqual(['/api/collected/edit', SECRET, `{"to":"did:key:z6MkMe","collection":"c-in","id":"${HELLO}","says":"hello, edited"}`])
+  expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
+  // Saved, the field is gone and the pill is still open.
+  expect(await ui.find({ type: 'Input', key: `says:${HELLO}` })).toBeUndefined()
+  expect(await has(ui, '[now]')).toBe(true)
+  await ui.unmount()
+})
+
+// "bg red when minus, bg green when plus, for like a sec"
+// "and then for a full 30 sec, it stays bg white with text black"
+// "another click resets timer, timer finishes means, you commit to this new time"
+// "its the +- its bg that was supposed to change color, but the invert on the time, you may keep"
+// "decrease the wait to 20s"
+test('+- waits for the last press: the +- pressed is green or red a second, white twenty, then the hold is asked once', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+  const holds = () => asked.filter(a => a[0] === '/api/collected/hold')
+
+  await press(ui, `pill:${IN}`)
+  // + on the hours: that +- green, the time inverted, nothing asked.
+  await press(ui, `h+:${IN}`)
+  expect(await worn(ui, '+', 0)).toEqual(['green', 'white'])
+  expect(await worn(ui, '-', 0)).toEqual(['green', 'white'])
+  expect(await worn(ui, '+', 1)).toEqual([undefined, undefined])
+  expect(await worn(ui, '16:40')).toEqual(['white', 'black'])
+  expect(holds().length).toBe(0)
+  // A second on, that +- waits white with black text.
+  await clock.advance(1000)
+  expect(await worn(ui, '+', 0)).toEqual(['white', 'black'])
+  // - on the minutes fifteen seconds in: that +- red, and the wait starts over.
+  await clock.advance(15000)
+  await press(ui, `m-:${IN}`)
+  expect(await worn(ui, '+', 1)).toEqual(['red', 'white'])
+  expect(await worn(ui, '+', 0)).toEqual([undefined, undefined])
+  expect(await worn(ui, '16:35')).toEqual(['white', 'black'])
+  await clock.advance(19000)
+  expect(holds().length).toBe(0)
+  await clock.advance(3000)
+  expect(holds().map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${at(16, 35).replace('.000Z', 'Z')}"}`])
+  expect(await worn(ui, '+', 1)).toEqual([undefined, undefined])
+  await clock.advance(60000)
+  expect(holds().length).toBe(1)
+  await ui.unmount()
+})
+
+// "or having a collection wait for days"
+// "why wont i see 26, when i go two days into the future?"
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+test('a time is moved on for days and says its day, and is held where it was moved to', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  for (let i = 0; i < 49; i++) await press(ui, `h+:${IN}`)
+  expect(await has(ui, '11-16.16:40')).toBe(true)
+  await clock.advance(22000)
+  expect(asked.filter(a => a[0] === '/api/collected/hold').map(a => a[2])).toEqual([`{"to":"did:key:z6MkMe","collection":"c-in","until":"${new Date(2026, 10, 16, 16, 40).toISOString().replace('.000Z', 'Z')}"}`])
+  await ui.unmount()
+})
+
+test('esc leaves a moved time where it was: nothing is held', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `h+:${IN}`)
+  await press(ui, `esc:${IN}`)
+  await clock.advance(60000)
+  expect(asked.some(a => a[0] === '/api/collected/hold')).toBe(false)
   await ui.unmount()
 })
 
 // "[now], this means to me kind fo same thing as [delete] two stage, press once, you get [NOW] green, and press another time, it actually get's released"
-test('now is pressed twice: once it is [NOW] green, and the second releases', async ($, on) => {
-  const ran: string[][] = []
+// "and there should be a more explicit abort, that is two stage abort"
+// "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
+test('now, delete and the arrow take two presses: [NOW] green, [DELETE] red, XXXX red', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, ran, ANSWER, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  engine(on, [], ANSWER, asked)
+  const ui = await mounted($)
+  const piece = async (text: string) => (await pieces(ui)).find(t => t.text === text)
 
-  await ui.pointer({ type: 'down', x: 10, y: 0, button: 'left' })
-  await ui.pointer({ type: 'down', x: 7, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[NOW\]$/ }))?.props.color).toBe('green')
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  expect([(await piece('[NOW]'))?.props.color, (await piece('[NOW]'))?.props.bold]).toEqual(['green', true])
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
-  await ui.pointer({ type: 'down', x: 7, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkMe"}'])
+  // Arming another lets the first go.
+  await press(ui, `delete:${IN}`)
+  expect((await piece('[DELETE]'))?.props.color).toBe('red')
+  expect(await has(ui, '[now]')).toBe(true)
+  expect(asked.some(a => a[0] === '/api/collected/cancel')).toBe(false)
+  // The arrow: once is XXXX, twice deletes that one message.
+  await press(ui, `arrow:${HELLO}`)
+  expect((await piece('XXXX'))?.props.color).toBe('red')
+  await press(ui, `arrow:${HELLO}`)
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, `{"to":"did:key:z6MkMe","collection":"c-in","id":"${HELLO}"}`])
+  await press(ui, `now:${IN}`)
+  await press(ui, `now:${IN}`)
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
+  await press(ui, `delete:${IN}`)
+  await press(ui, `delete:${IN}`)
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
+  await ui.unmount()
+})
+
+test('an armed press waits five seconds for its second: after that, a press arms it again', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  await clock.advance(6000)
+  await press(ui, `now:${IN}`)
+  expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
+  await clock.advance(1000)
+  await press(ui, `now:${IN}`)
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkMe","collection":"c-in"}'])
+  await ui.unmount()
+})
+
+// "yeah, i dont think it want's to move beyond 20:00"
+test('what is pressed outlives the drawing: drawn anew, the pill is open, its time still moved, and it is held', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, true)
+  const clock = mock.clock(on, { now: NOW })
+  const first = await mounted($)
+  await press(first, `pill:${IN}`)
+  await press(first, `h+:${IN}`)
+  await first.unmount()
+
+  const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await worn(again, '16:40')).toEqual(['white', 'black'])
+  await clock.advance(22000)
+  expect(asked.filter(a => a[0] === '/api/collected/hold').length).toBe(1)
+  await again.unmount()
+})
+
+test('what the node refuses is said in red under the pills, and the pill stays open', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, false, 'what waits for it is not yours to act on')
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  await press(ui, `now:${IN}`)
+  const why = await ui.find({ type: 'Text', text: 'not yours to act on' })
+  expect(why?.props.color).toBe('red')
+  expect(await has(ui, '[now]')).toBe(true)
   await ui.unmount()
 })
 
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 // "AND WITHOUT CHANCE FOR USER ERROR"
 test('an approval is the thing itself: approve twice approves it, deny twice denies it, by its own id', async ($, on) => {
-  const ran: string[][] = []
   const asked: Asked[] = []
-  const answer = JSON.stringify({ collected: [
-    { to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
-      { id: 'a1', from: 'kapteyn', says: "REACH is 'lines:scene' of TOKEN on kapteyn, for ramen", at: at(9, 0),
-        from_did: 'did:key:z6MkK', reach: { peer: 'did:key:z6MkK', path: 'lines:scene', to: 'TOKEN' } },
+  const kept = JSON.stringify({ collected: [
+    { id: 'c-ramen', from: 'ramen', from_did: 'did:key:z6MkRamen', to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
+      { id: 'r1', from: 'ramen', says: "REACH is 'lines:scene' of TOKEN on kapteyn, for ramen", at: at(9, 40), from_did: 'did:key:z6MkRamen', reach: {} },
+      { id: 'k1', from: 'ramen', says: 'admit the key of ramen', at: at(9, 41), from_did: 'did:key:z6MkRamen', admit: {} },
     ] },
   ] })
-  engine(on, ran, answer, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  engine(on, [], kept, asked)
+  const ui = await mounted($)
 
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^REACH is 'lines:scene' of TOKEN on kapteyn, for ramen$/ }))?.props.bold).toBe(true)
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[approve\]$/ }))?.text).toBe('[approve]')
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[APPROVE\]$/ }))?.props.color).toBe('green')
+  expect(await rowOf(ui, '[approve]', "REACH is 'lines:scene' of TOKEN on kapteyn, for ramen")).toBe("[approve] [deny]  REACH is 'lines:scene' of TOKEN on kapteyn, for ramen")
+  await press(ui, 'approve:r1')
+  expect((await pieces(ui)).find(t => t.text === '[APPROVE]')?.props.color).toBe('green')
   expect(asked.some(a => a[0] === '/api/collected/release')).toBe(false)
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkRamen","id":"a1"}'])
-  asked.length = 0
-  await ui.pointer({ type: 'down', x: 11, y: 0, button: 'left' })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^\[DENY\]$/ }))?.props.color).toBe('red')
-  await ui.pointer({ type: 'down', x: 11, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/cancel', 'a'.repeat(64), '{"to":"did:key:z6MkRamen","id":"a1"}'])
+  await press(ui, 'approve:r1')
+  expect(asked).toContainEqual(['/api/collected/release', SECRET, '{"to":"did:key:z6MkRamen","collection":"c-ramen","id":"r1"}'])
+  await press(ui, 'deny:k1')
+  await press(ui, 'deny:k1')
+  expect(asked).toContainEqual(['/api/collected/cancel', SECRET, '{"to":"did:key:z6MkRamen","collection":"c-ramen","id":"k1"}'])
   await ui.unmount()
 })
 
-// "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
-test('a key a node holds nothing for is an approval: approve twice admits it, by its own id', async ($, on) => {
-  const ran: string[][] = []
-  const asked: Asked[] = []
-  const answer = JSON.stringify({ collected: [
-    { to: 'ramen', did: 'did:key:z6MkRamen', due: '', waiting: [
-      { id: 'k1', from: 'kapteyn', says: "admit ramen's key did:key:z6MkRamen on kapteyn, for ramen", at: at(9, 0),
-        from_did: 'did:key:z6MkK', admit: { peer: 'did:key:z6MkK', did: 'did:key:z6MkRamen', label: 'ramen' } },
-    ] },
-  ] })
-  engine(on, ran, answer, asked)
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /^admit ramen's key did:key:z6MkRamen on kapteyn, for ramen$/ }))?.props.bold).toBe(true)
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left' })
-  expect(asked).toContainEqual(['/api/collected/release', 'a'.repeat(64), '{"to":"did:key:z6MkRamen","id":"k1"}'])
-  await ui.unmount()
-})
+const BRANCH = 'fa8a1589-576c-4ecb-84c8-f7d0f357b448'
 
 // "while its forking, you see it right there, at that moment, who to let keep the name, if you dont do anything, nothing happens, otherwise you click the other session, and it gets the name and is the active session at the same time."
-test('a session that branched from this one stands as a row, and a click gives it the name', async ($, on) => {
+test('a session that branched from this one stands as a row, and a press gives it the name', async ($, on) => {
   const ran: string[][] = []
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
@@ -206,7 +401,7 @@ test('a session that branched from this one stands as a row, and a click gives i
   on('process.run', (_, e) => {
     ran.push([...e.argv])
     const stdout = e.argv[1] === 'forks'
-      ? '{"name":"Mycelia","here":true,"forks":[{"session":"fa8a1589-576c-4ecb-84c8-f7d0f357b448","name":"","title":"mycelia on k","holds":false}]}'
+      ? `{"name":"Mycelia","here":true,"forks":[{"session":"${BRANCH}","name":"","title":"mycelia on k","holds":false}]}`
       : ''
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
@@ -216,26 +411,22 @@ test('a session that branched from this one stands as a row, and a click gives i
     resumed.push(`${e.command} ${e.args}`)
     return { text: '' }
   })
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const ui = await mounted($)
 
-  const lines = await ui.find({ type: 'Client', key: 'lines' })
-  expect(lines?.props.props).toEqual({ lines: [], name: 'Mycelia', here: true, forks: [{ session: 'fa8a1589-576c-4ecb-84c8-f7d0f357b448', name: '', title: 'mycelia on k', holds: false }] })
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /stays with/ }))?.text).toBe('⑂ Mycelia stays with  ')
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /● this session/ }))?.props.bold).toBe(true)
-  expect((await ui.find({ in: 'lines', type: 'Text', text: /○ mycelia on k/ }))?.text).toBe('   ○ mycelia on k')
+  expect((await pieces(ui)).map(t => t.text).join('')).toBe('⑂ Mycelia stays with  ● this session   ○ mycelia on k')
+  expect((await pieces(ui)).find(t => t.text === '● this session')?.props.bold).toBe(true)
   // On the filled one: nothing moves.
-  await ui.pointer({ type: 'down', x: 25, y: 0, button: 'left' })
+  await ui.pointer({ type: 'down', x: 25, y: 0, button: 'left' }, { in: 'pills' })
   expect(ran.some(argv => argv[1] === 'forks' && argv[2] === 'give')).toBe(false)
-  await ui.pointer({ type: 'down', x: 42, y: 0, button: 'left' })
-  expect(ran).toContainEqual(['ground', 'forks', 'give', 'fa8a1589-576c-4ecb-84c8-f7d0f357b448'])
+  await ui.pointer({ type: 'down', x: 42, y: 0, button: 'left' }, { in: 'pills' })
+  expect(ran).toContainEqual(['ground', 'forks', 'give', BRANCH])
   // "and it gets the name and is the active session at the same time"
-  expect(resumed).toEqual(['resume fa8a1589-576c-4ecb-84c8-f7d0f357b448'])
+  expect(resumed).toEqual([`resume ${BRANCH}`])
   await ui.unmount()
 })
 
 // "i dont thin that ux is good"
-test('a branch running in another window is given the name on a click, and how to open it is said', async ($, on) => {
+test('a branch running in another window is given the name on a press, and how to open it is said', async ($, on) => {
   const ran: string[][] = []
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
@@ -244,28 +435,25 @@ test('a branch running in another window is given the name on a click, and how t
   on('process.run', (_, e) => {
     ran.push([...e.argv])
     const stdout = e.argv[1] === 'forks'
-      ? '{"name":"Mycelia","here":true,"forks":[{"session":"fa8a1589-576c-4ecb-84c8-f7d0f357b448","name":"","title":"mycelia on k","holds":false,"running":true}]}'
+      ? `{"name":"Mycelia","here":true,"forks":[{"session":"${BRANCH}","name":"","title":"mycelia on k","holds":false,"running":true}]}`
       : ''
     return { value: { exitCode: 0, stdout, stderr: '' } }
   })
   on('command.run', () => ({ text: '"Granite name setup ⑂ mycelia on k" is running in the background (fa8a1589). Run `claude attach fa8a1589` to open it.' }))
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  await ui.pointer({ type: 'down', x: 42, y: 0, button: 'left' })
-  expect(ran).toContainEqual(['ground', 'forks', 'give', 'fa8a1589-576c-4ecb-84c8-f7d0f357b448'])
-  expect((await ui.find({ type: 'Text', text: /the name is that session's now/ }))?.text).toContain('claude attach fa8a1589')
+  const ui = await mounted($)
+  await ui.pointer({ type: 'down', x: 42, y: 0, button: 'left' }, { in: 'pills' })
+  expect(ran).toContainEqual(['ground', 'forks', 'give', BRANCH])
+  expect((await ui.find({ type: 'Text', text: "the name is that session's now" }))?.text).toContain('claude attach fa8a1589')
   await ui.unmount()
 })
 
 test('nothing waiting draws nothing', async ($, on) => {
-  const ran: string[][] = []
-  engine(on, ran, '{"collected":[]}')
+  engine(on, [], '{"collected":[]}')
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
     return <Text>engine</Text>
   })
-  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect((await ui.find({ type: 'Text', text: /engine/ }))?.text).toBe('engine')
+  const ui = await mounted($)
+  expect((await ui.find({ type: 'Text', text: 'engine' }))?.text).toBe('engine')
   await ui.unmount()
 })
