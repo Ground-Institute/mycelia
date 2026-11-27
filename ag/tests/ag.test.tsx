@@ -130,6 +130,26 @@ test('the pills are one line, the soonest first, a day not today before its time
   await ui.unmount()
 })
 
+// "yeah, because i actually do see myself using it like that as well, a way to schedule something into the future for itself."
+// What a session says to its own name comes in: it is one pill, and one row.
+test('what a session says to itself is drawn once, as what comes in', async ($, on) => {
+  const kept = JSON.stringify({ collected: [
+    { id: 'c-self', from: 'Mycelia', from_did: ME, to: 'Mycelia', did: ME, due: at(17, 24), waiting: [
+      { id: 's1', from: 'Mycelia', says: 'Which do I do first?', at: at(11, 24), from_did: ME },
+      { id: 's2', from: 'Mycelia', says: 'the build on k is red', at: at(11, 24), from_did: ME },
+    ] },
+  ] })
+  engine(on, [], kept)
+  const ui = await mounted($)
+
+  expect((await pieces(ui)).map(t => t.text).join('')).toBe('17:24<-[Mycelia] ')
+  await press(ui, 'pill:c-self')
+  const said = (await pieces(ui)).map(t => t.text).filter(t => t === 'Which do I do first?' || t === 'the build on k is red')
+  expect(said).toEqual(['Which do I do first?', 'the build on k is red'])
+  expect(await rowOf(ui, '  ', 'Which do I do first?')).toBe('  17:24 <-- Mycelia: Which do I do first?')
+  await ui.unmount()
+})
+
 // "+- +- [now]         [edit]              [delete] [esc]"
 // "  16:25 <-- Shiitake: Some text of Shiitake to us."
 // "like i said, you cant just pull thinngs from under me. it cost me energy to learn, and i expect it to hold"

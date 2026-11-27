@@ -55,6 +55,8 @@ function clockOf(at: string): string {
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
 // A key a node holds nothing for, to admit, is an approval as a reach line is.
+// "a way to schedule something into the future for itself."
+// What a session says to itself comes in, and is drawn once, as that.
 export function linesOf(did: string, all: Kept[]): Line[] {
   const approval = (w: Kept['waiting'][number]) => !!(w.reach || w.admit)
   const lines: Line[] = []
@@ -64,7 +66,7 @@ export function linesOf(did: string, all: Kept[]): Line[] {
         if (!approval(w)) lines.push({ way: 'in', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.from || w.from, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (w.from_did === did && !approval(w))
+      if (w.from_did === did && one.did !== did && !approval(w))
         lines.push({ way: 'out', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
