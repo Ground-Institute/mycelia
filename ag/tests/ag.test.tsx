@@ -480,8 +480,8 @@ test('nothing waiting draws nothing', async ($, on) => {
 })
 
 // "Getting A2UI pieces to show up in another session from this one"
-// What a message says beside its words, as A2UI, stands under it in the open
-// pill: text and layout first, as nothing pressed on it goes back yet.
+// 「[Opus 5.5] What a message says beside its words, as A2UI, stands under it in the open」
+// 「[Opus 5.5] pill: text and layout first, as nothing pressed on it goes back yet.」
 test('the surface a message says stands under it in the open pill', async ($, on) => {
   const surface = [{
     version: '1.0',
@@ -507,7 +507,7 @@ test('the surface a message says stands under it in the open pill', async ($, on
   engine(on, [], kept)
   const ui = await mounted($)
 
-  // At rest, nothing of the surface is drawn.
+  // 「[Opus 5.5] At rest, nothing of the surface is drawn.」
   expect(await has(ui, '    the split  or the person')).toBe(false)
   await press(ui, 'pill:c-a2ui')
   const texts = (await pieces(ui)).map(t => t.text)
@@ -518,8 +518,8 @@ test('the surface a message says stands under it in the open pill', async ($, on
   await ui.unmount()
 })
 
-// The messages are applied in the order said; what cannot be applied is said
-// where the surface stands, and the rest still is.
+// 「[Opus 5.5] The messages are applied in the order said; what cannot be applied is said」
+// 「[Opus 5.5] where the surface stands, and the rest still is.」
 test('a surface is what its messages leave standing, in the order said', async () => {
   const v = '1.0'
   expect(surfaceLines([
