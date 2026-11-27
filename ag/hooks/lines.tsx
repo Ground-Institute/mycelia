@@ -10,14 +10,17 @@ import type { Fork, Line } from '../types'
 
 // The sessions that branched from this one stand above the messages, a row
 // each; a click on one gives it this session's name (ground forks give).
-export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean }
+// today is this clock's MM-DD: what tells a day that is not today.
+// moving is each time moved by +- that waits in ag's hooks to be held, by DID.
+export type Lines = { lines: Line[]; forks?: Fork[]; name?: string; here?: boolean; today?: string; moving?: Record<string, string> }
 
 type State = {
   open?: number // the message clicked in
   armed?: number // the message whose arrow was pressed once: XXXX
   deleting?: boolean // [delete] pressed once on the message clicked in: [DELETE]
   releasing?: boolean // [now] pressed once on the message clicked in: [NOW]
-  due?: string // the time it is held to, as moved by +-, before it is asked
+  due?: string // the time it is held to, RFC3339, as moved by +-, before it is asked
+  moving?: Moving // the +- presses not yet asked of the node
   approving?: number // the approval whose [approve] was pressed once: [APPROVE]
   denying?: number // the approval whose [deny] was pressed once: [DENY]
   typing?: string // what is typed in place of what is said, while editing
@@ -32,15 +35,20 @@ type Row = { line: number; buttons: boolean }
 
 // How far the message line stands in under its buttons.
 const UNDER = 2
-// Where the arrow stands on a message line at rest, and how wide it is.
-const ARROW = 6
+// How wide the arrow is on a message line; it stands after the time drawn.
 const ARROW_WIDE = 4
 
-// The time moved by minutes, around the clock.
-function moved(due: string, minutes: number): string {
-  const [h, m] = due.split(':').map(Number)
-  const all = (((h ?? 0) * 60 + (m ?? 0) + minutes) % 1440 + 1440) % 1440
-  return `${String(Math.floor(all / 60)).padStart(2, '0')}:${String(all % 60).padStart(2, '0')}`
+// "why wont i see 26, when i go two days into the future?"
+// The time moved by minutes, RFC3339 in and out: days on, never around the clock.
+function moved(at: string, minutes: number): string {
+  return new Date(Date.parse(at) + minutes * 60000).toISOString().replace('.000Z', 'Z')
+}
+
+// A time as this clock reads it: its HH:MM, and its MM-DD.
+function readOf(at: string): { clock: string; day: string } {
+  const t = new Date(at)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return { clock: `${two(t.getHours())}:${two(t.getMinutes())}`, day: `${two(t.getMonth() + 1)}-${two(t.getDate())}` }
 }
 
 // Each row of the region: the message clicked in has its buttons above it.
@@ -53,11 +61,24 @@ function rowsOf(lines: Line[], open?: number): Row[] {
   return rows
 }
 
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+// The time drawn on a message's line, with its day when that is not today:
+// the node's, or the one moved by +-, held to tomorrow once now is past it.
+function shownOf(state: State, at: number, line: Line, props: Lines): string {
+  const due = (state.open === at && state.due) || props.moving?.[line.to]
+  if (due) {
+    const { clock, day } = readOf(due)
+    return day !== props.today ? `${day} ${clock}` : clock
+  }
+  return line.day && line.day !== props.today ? `${line.day} ${line.due}` : line.due
+}
+
 // A press on a message's own line: on its arrow, or anywhere else on it.
 // "the arrow you can also click on, one to see thebutton change into XXXX and again to cancel"
-function onLine(state: State, at: number, x: number, line: Line): Pressed {
+function onLine(state: State, at: number, x: number, line: Line, shown: string): Pressed {
   const left = state.open === at ? UNDER : 0
-  if (x >= left + ARROW && x < left + ARROW + ARROW_WIDE) {
+  const arrow = left + shown.length + 1
+  if (x >= arrow && x < arrow + ARROW_WIDE) {
     if (state.armed === at) return { post: { act: 'cancel', to: line.to, id: line.id }, next: {} }
     return { next: { ...state, armed: at } }
   }
@@ -75,6 +96,29 @@ const deleteOf = (deleting: boolean) => (deleting ? '[DELETE]' : '[delete]')
 
 // The +- pairs: hours first, then minutes, each up then down.
 const NUDGE: Record<number, number> = { 0: 60, 1: -60, 3: 5, 4: -5 }
+
+// "bg red when minus, bg green when plus, for like a sec, and then for a full 30 sec, it stays bg white with text black"
+// "another click resets timer, timer finishes means, you commit to this new time"
+// A +- press moves the time and tells ag's hooks, which ask the node to hold
+// it twenty-one seconds after the last press. Here the +- pressed flashes for
+// a second, then stands white for the wait. Counted in ticks of TICK_MS.
+// pair is the +- pressed: 0 the hours, 1 the minutes.
+type Moving = { to: string; left: number; up: boolean; pair: number }
+const TICK_MS = 100
+const FLASH = 10
+const WAIT = 200
+
+// One tick of the wait as drawn.
+function ticked(state: State): Pressed {
+  const moving = state.moving
+  if (!moving) return { next: state }
+  if (moving.left > 1) return { next: { ...state, moving: { ...moving, left: moving.left - 1 } } }
+  const { moving: _, ...rest } = state
+  return { next: rest }
+}
+
+// The Clients whose wait is ticking: one clock each, started once.
+const ticking = new WeakSet<object>()
 
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 // "AND WITHOUT CHANCE FOR USER ERROR"
@@ -98,11 +142,13 @@ function onApproval(state: State, at: number, x: number, line: Line): Pressed {
 }
 
 // A press on the buttons of the message clicked in.
-function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed {
+function onButtons(state: State, x: number, line: Line, lines: Line[], waiting?: string): Pressed {
   const nudge = NUDGE[x]
   if (nudge !== undefined) {
-    const until = moved(state.due ?? line.due, nudge)
-    return { post: { act: 'hold', to: line.to, until }, next: { ...state, due: until } }
+    const from = state.due ?? waiting ?? line.at
+    if (!from) return { next: state }
+    const until = moved(from, nudge)
+    return { post: { act: 'moving', to: line.to, until }, next: { ...state, due: until, moving: { to: line.to, left: FLASH + WAIT, up: nudge > 0, pair: x < 3 ? 0 : 1 } } }
   }
   if (x >= AT.now && x < AT.now + 5) {
     if (state.releasing) return { post: { act: 'release', to: line.to }, next: {} }
@@ -118,7 +164,8 @@ function onButtons(state: State, x: number, line: Line, lines: Line[]): Pressed 
     return { next: { ...state, deleting: true, releasing: false } }
   }
   // "cancel should get us out of the clicked-in,"
-  if (x >= AT.esc && x < AT.esc + 5) return { next: {} }
+  // A time moved and not yet held stays where it was.
+  if (x >= AT.esc && x < AT.esc + 5) return waiting ? { post: { act: 'still', to: line.to }, next: {} } : { next: {} }
   return { next: state }
 }
 
@@ -155,6 +202,15 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     if (pressed.post) surface.post(pressed.post)
     surface.setState(pressed.next)
   }
+  if (!ticking.has(surface)) {
+    ticking.add(surface)
+    // Each Client drawn anew is told to ag's hooks, where it is written down.
+    surface.post({ act: 'mounted' })
+    surface.every(TICK_MS, () => {
+      const now = surface.state
+      if (now?.moving) apply(ticked(now))
+    })
+  }
 
   surface.onPointer((e: ClientPointerEvent) => {
     if (e.type !== 'down') return
@@ -179,7 +235,7 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
       apply(onApproval(state, row.line, e.x, line))
       return
     }
-    apply(row.buttons ? onButtons(state, e.x, line, props.lines) : onLine(state, row.line, e.x, line))
+    apply(row.buttons ? onButtons(state, e.x, line, props.lines, props.moving?.[line.to]) : onLine(state, row.line, e.x, line, shownOf(state, row.line, line, props)))
   })
 
   surface.onKey((e: ClientKeyEvent) => {
@@ -188,9 +244,21 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     apply(line ? onKey(state, e.key, line) : { next: {} })
   })
 
+  // "its the +- its bg that was supposed to change color"
+  // The +- pressed flashes green up or red down for a second, then stands
+  // white for the wait.
+  const moving = state.moving
+  const pairOf = (pair: number) => {
+    if (!moving || moving.pair !== pair) return {}
+    if (moving.left > WAIT) return { backgroundColor: moving.up ? 'green' : 'red', color: 'white' }
+    return { backgroundColor: 'white', color: 'black' }
+  }
   const buttonsOf = (at: number) => (
     <Box key={`b${at}`} flexDirection="row">
-      <Text>{'+- +- '}</Text>
+      <Text {...pairOf(0)}>{'+-'}</Text>
+      <Text>{' '}</Text>
+      <Text {...pairOf(1)}>{'+-'}</Text>
+      <Text>{' '}</Text>
       <Text color={state.releasing ? 'green' : undefined} bold={!!state.releasing}>{nowOf(!!state.releasing)}</Text>
       <Text>{' '.repeat(AT.edit - AT.now - 5) + '[edit]' + ' '.repeat(AT.delete - AT.edit - 6)}</Text>
       <Text color={state.deleting ? 'red' : undefined} bold={!!state.deleting}>{deleteOf(!!state.deleting)}</Text>
@@ -218,11 +286,13 @@ const Ag: ClientModule<Lines, State> = (props, surface) => {
     const open = state.open === at
     const editing = open && state.typing !== undefined
     const armed = state.armed === at
+    // "but the invert on the time, you may keep"
+    const lit = (open && state.moving) || props.moving?.[line.to] ? { backgroundColor: 'white', color: 'black' } : {}
     return (
       <Box key={`l${at}`} flexDirection="row">
         <Box flexShrink={0} flexDirection="row">
           {open ? <Text>{' '.repeat(UNDER)}</Text> : null}
-          <Text>{open && state.due ? state.due : line.due}</Text>
+          <Text {...lit}>{shownOf(state, at, line, props)}</Text>
           <Text> </Text>
           <Text color={armed ? 'red' : undefined}>{armed ? 'XXXX' : line.way === 'in' ? '<-- ' : '--> '}</Text>
           <Text bold>{line.who}</Text>

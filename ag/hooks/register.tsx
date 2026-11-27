@@ -21,6 +21,8 @@ const refused = atom({ plugin: 'ag', key: 'refused' } as const, null)
 // The sessions that branched from this one, as ground recorded them at the
 // fork: each stands as a row, and a click on it gives it this session's name.
 const forks = atom({ plugin: 'ag', key: 'forks' } as const, null)
+// Each time moved by +- that waits to be held, by DID, for the band.
+const moving = atom({ plugin: 'ag', key: 'moving' } as const, null)
 
 // Every press and what it came to, written where it can be read from outside.
 const PRESSES = '/Users/s.b.vanhouten/.local/state/ug/ag-presses'
@@ -42,6 +44,24 @@ function clockOf(at: string): string {
   return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
 }
 
+// "if i put it all the way until the next day, right now, that isnt clearly indicated. with like mm-dd"
+// The day of a time laye keeps on this clock, MM-DD.
+function dayOf(at: string): string {
+  const t = new Date(at)
+  if (Number.isNaN(t.getTime()) || t.getTime() <= 0) return ''
+  return `${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+}
+
+// A line's due time, its day, and the time itself.
+function dueOf(at: string): { due: string; day: string; at: string } {
+  return { due: clockOf(at), day: dayOf(at), at }
+}
+
+// Today on this clock, MM-DD: a time on another day says its day.
+export function clockNow(at: Date): { today: string } {
+  return { today: dayOf(at.toISOString()) }
+}
+
 // What is drawn for the session whose DID did is: what comes in for it, what
 // it said that waits elsewhere, and every approval, whoever's it is.
 // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
@@ -53,14 +73,14 @@ export function linesOf(did: string, all: Kept[]): Line[] {
   for (const one of all)
     if (one.did === did)
       for (const w of one.waiting)
-        if (!approval(w)) lines.push({ way: 'in', to: one.did, due: clockOf(one.due), who: w.from, says: w.says, id: w.id })
+        if (!approval(w)) lines.push({ way: 'in', to: one.did, ...dueOf(one.due), who: w.from, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
       if (w.from_did === did && !approval(w))
-        lines.push({ way: 'out', to: one.did, due: clockOf(one.due), who: one.to, says: w.says, id: w.id })
+        lines.push({ way: 'out', to: one.did, ...dueOf(one.due), who: one.to, says: w.says, id: w.id })
   for (const one of all)
     for (const w of one.waiting)
-      if (approval(w)) lines.push({ way: 'approve', to: one.did, due: clockOf(w.at), who: '', says: w.says, id: w.id })
+      if (approval(w)) lines.push({ way: 'approve', to: one.did, ...dueOf(w.at), who: '', says: w.says, id: w.id })
   return lines
 }
 
@@ -158,7 +178,8 @@ function askOf(d: Press): [string, Record<string, string>] {
   const body: Record<string, string> = { to: d.to }
   // One thing approved or denied by its own id.
   if ((d.act === 'cancel' || d.act === 'release') && d.id) body.id = d.id
-  if (d.act === 'hold' && d.until) body.until = untilOf(d.until)
+  // A time moved by +- is the whole time; HH:MM is the next time this clock reads it.
+  if (d.act === 'hold' && d.until) body.until = d.until.includes('T') ? d.until : untilOf(d.until)
   if (d.act === 'release' && d.says !== undefined) body.says = d.says
   return [`/api/collected/${d.act}`, body]
 }
@@ -216,6 +237,43 @@ async function press($: EngineInterface, d: Press, sessionId: string) {
   return r.exitCode === 0
 }
 
+// "yeah, i dont think it want's to move beyond 20:00"
+// A time moved by +- waits here, not in the Client: a Client drawn anew
+// forgets what it held, and on 2026-11-24 at 13:27 a move to 13:07 tomorrow
+// was lost so, never asked. Each move is held MOVE_MS after the last press
+// on it, by the clock that ticks every TICK_MS.
+// "decrease the wait to 20s"
+const MOVE_MS = 21000
+const TICK_MS = 1000
+const moves = new Map<string, { until: string; at: number }>()
+const movesNow = () => Object.fromEntries([...moves].map(([to, m]) => [to, m.until]))
+async function drawn($: EngineInterface) {
+  await update($, moving, () => movesNow())
+}
+
+// What happened to each move, and every time the Client was drawn anew, the
+// last hundred, written where it can be read from outside.
+const MOVES = '/Users/s.b.vanhouten/.local/state/ug/ag-moves'
+const traced: string[] = []
+async function trace($: EngineInterface, what: Record<string, unknown>) {
+  traced.push(JSON.stringify({ at: await $.clock.now(), ...what }))
+  if (traced.length > 100) traced.shift()
+  await $.fs.write(MOVES, traced.join('\n') + '\n')
+}
+
+// The moves whose wait ran out are asked of the node, each once.
+async function held($: EngineInterface, sessionId: string) {
+  const now = await $.clock.now()
+  const due = [...moves].filter(([, m]) => m.at + MOVE_MS <= now)
+  for (const [to, m] of due) {
+    moves.delete(to)
+    await drawn($)
+    const ok = await press($, { act: 'hold', to, until: m.until }, sessionId)
+    await trace($, { held: to, until: m.until, ok })
+  }
+  if (due.length > 0) await ask($, sessionId)
+}
+
 export const register: Register = on => {
   let sessionId = ''
 
@@ -224,12 +282,30 @@ export const register: Register = on => {
     sessionId = await $.session.id()
     await ask($, sessionId)
     $.clock.every(EVERY_MS, () => ask($, sessionId))
+    $.clock.every(TICK_MS, () => held($, sessionId))
     return started
   })
 
   on('ui.message', async ($, e, next) => {
     const d = e.data as Partial<Press>
+    if (d.act === 'mounted') {
+      await trace($, { mounted: true, moving: movesNow() })
+      return next(e)
+    }
     if (!d.act || !d.to) return next(e)
+    if (d.act === 'moving' && d.until) {
+      moves.set(d.to, { until: d.until, at: await $.clock.now() })
+      await drawn($)
+      await trace($, { moving: d.to, until: d.until })
+      return next(e)
+    }
+    if (d.act === 'still' || d.act === 'release' || d.act === 'cancel') {
+      if (moves.delete(d.to)) {
+        await drawn($)
+        await trace($, { dropped: d.to, by: d.act })
+      }
+      if (d.act === 'still') return next(e)
+    }
     // "and it gets the name and is the active session at the same time"
     // The switch goes first, and the name follows only a session the person
     // can be in: one running in the background is opened elsewhere, and what
@@ -266,12 +342,13 @@ export const register: Register = on => {
     const now = await read($, said)
     const why = await read($, refused)
     const branched = (await read($, forks)) ?? { name: '', here: true, forks: [] }
+    const waiting = (await read($, moving)) ?? {}
     if (now === null || (now.ok && now.lines.length === 0 && branched.forks.length === 0 && why === null)) return next(e)
     const { Box, Text, Client } = $.ui.resolve(e)
     if (!now.ok) return <Box><Text color="red">{now.text}</Text></Box>
     return (
       <Box flexDirection="column">
-        <Client key="lines" module="./lines.tsx" props={{ lines: now.lines, forks: branched.forks, name: branched.name, here: branched.here }} />
+        <Client key="lines" module="./lines.tsx" props={{ lines: now.lines, forks: branched.forks, name: branched.name, here: branched.here, moving: waiting, ...clockNow(new Date(await $.clock.now())) }} />
         {why === null ? null : <Text color="red">{why}</Text>}
       </Box>
     )
