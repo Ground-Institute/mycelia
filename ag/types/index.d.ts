@@ -13,7 +13,7 @@ export type Line = {
   who: string
   says: string
   id: string
-  // The A2UI messages said beside it, as laye keeps them: drawn under it open.
+  // 「[Opus 5.5] The A2UI messages said beside it, as laye keeps them: drawn under it open.」
   a2ui?: unknown[]
 }
 
