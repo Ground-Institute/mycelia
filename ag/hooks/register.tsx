@@ -40,7 +40,7 @@ type Kept = {
   to: string
   did: string
   due: string
-  waiting: { id: string; from: string; says: string; at: string; from_did: string; reach?: object; admit?: object }[]
+  waiting: { id: string; from: string; says: string; at: string; from_did: string; reach?: object; admit?: object; a2ui?: unknown[] }[]
 }
 
 // A time laye keeps, in RFC3339, as this clock reads it: HH:MM.
@@ -63,11 +63,11 @@ export function linesOf(did: string, all: Kept[]): Line[] {
   for (const one of all)
     if (one.did === did)
       for (const w of one.waiting)
-        if (!approval(w)) lines.push({ way: 'in', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.from || w.from, says: w.says, id: w.id })
+        if (!approval(w)) lines.push({ way: 'in', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.from || w.from, says: w.says, id: w.id, a2ui: w.a2ui })
   for (const one of all)
     for (const w of one.waiting)
       if (w.from_did === did && one.did !== did && !approval(w))
-        lines.push({ way: 'out', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id })
+        lines.push({ way: 'out', to: one.did, collection: one.id, due: clockOf(one.due), at: one.due, who: one.to, says: w.says, id: w.id, a2ui: w.a2ui })
   for (const one of all)
     for (const w of one.waiting)
       if (approval(w)) lines.push({ way: 'approve', to: one.did, collection: one.id, due: clockOf(w.at), at: w.at, who: '', says: w.says, id: w.id })

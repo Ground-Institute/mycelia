@@ -1,4 +1,5 @@
 import type { Fork, Line, View } from '../types'
+import { surfaceLines } from './surface'
 
 // "IN ELEMENTS THERE IS THE CHAT"
 // "IT HAS PILLS"
@@ -213,6 +214,9 @@ export function pills(given: Given): Drawn {
         { text: ': ' },
         { text: line.says, dim: true, rest: true },
       ])
+      // "Getting A2UI pieces to show up in another session from this one"
+      // The surface said beside it stands under it, a row of the screen a line.
+      if (line.a2ui?.length) for (const text of surfaceLines(line.a2ui)) rows.push([{ text: `    ${text}` }])
       // "i cant edit a message, i have to backspace a bunch of times and rewrite the message itself."
       // Edited in the engine's own field, holding what it says: Enter saves
       // what this one says, and sends nothing.

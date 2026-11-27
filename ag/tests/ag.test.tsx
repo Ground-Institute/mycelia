@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import { surfaceLines } from '../hooks/surface'
 
 // A time on this clock, as laye keeps it: RFC3339.
 const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
@@ -476,4 +477,61 @@ test('nothing waiting draws nothing', async ($, on) => {
   const ui = await mounted($)
   expect((await ui.find({ type: 'Text', text: 'engine' }))?.text).toBe('engine')
   await ui.unmount()
+})
+
+// "Getting A2UI pieces to show up in another session from this one"
+// What a message says beside its words, as A2UI, stands under it in the open
+// pill: text and layout first, as nothing pressed on it goes back yet.
+test('the surface a message says stands under it in the open pill', async ($, on) => {
+  const surface = [{
+    version: '1.0',
+    createSurface: {
+      surfaceId: 'which-first',
+      catalogId: 'https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json',
+      components: [
+        { id: 'root', component: 'Column', children: ['asks', 'pair', 'choice'] },
+        { id: 'asks', component: 'Text', text: 'Which do I do first?' },
+        { id: 'pair', component: 'Row', children: ['one', 'other'] },
+        { id: 'one', component: 'Text', text: { '@path': '/first' } },
+        { id: 'other', component: 'Text', text: 'or the person' },
+        { id: 'choice', component: 'ChoicePicker', options: [], value: { '@path': '/chosen' } },
+      ],
+      dataModel: { first: 'the split' },
+    },
+  }]
+  const kept = JSON.stringify({ collected: [
+    { id: 'c-a2ui', from: 'Cumulus', from_did: 'did:key:z6MkCumulus', to: 'Mycelia', did: ME, due: at(15, 40), waiting: [
+      { id: 'u1', from: 'Cumulus', says: 'Which do I do first?', at: at(9, 0), from_did: 'did:key:z6MkCumulus', a2ui: surface },
+    ] },
+  ] })
+  engine(on, [], kept)
+  const ui = await mounted($)
+
+  // At rest, nothing of the surface is drawn.
+  expect(await has(ui, '    the split  or the person')).toBe(false)
+  await press(ui, 'pill:c-a2ui')
+  const texts = (await pieces(ui)).map(t => t.text)
+  const under = texts.slice(texts.indexOf('Which do I do first?') + 1)
+  expect(under).toContain('    Which do I do first?')
+  expect(under).toContain('    the split  or the person')
+  expect(under).toContain('    [ChoicePicker is not drawn yet]')
+  await ui.unmount()
+})
+
+// The messages are applied in the order said; what cannot be applied is said
+// where the surface stands, and the rest still is.
+test('a surface is what its messages leave standing, in the order said', async () => {
+  const v = '1.0'
+  expect(surfaceLines([
+    { version: v, createSurface: { surfaceId: 's', components: [{ id: 'root', component: 'Text', text: { '@path': '/a/b' } }] } },
+    { version: v, updateDataModel: { surfaceId: 's', path: '/a/b', value: 'moved on' } },
+    { version: v, updateComponents: { surfaceId: 's', components: [{ id: 'root', component: 'List', direction: 'horizontal', children: ['x', 'y'] }, { id: 'x', component: 'Text', text: { '@path': '/a/b' } }, { id: 'y', component: 'Text', text: 'two\nlines' }] } },
+    { version: v, createSurface: { surfaceId: 'gone', components: [{ id: 'root', component: 'Text', text: 'not here' }] } },
+    { version: v, deleteSurface: { surfaceId: 'gone' } },
+    { version: v, updateDataModel: { surfaceId: 'never', value: {} } },
+  ])).toEqual([
+    '[updateDataModel for never, which was never created]',
+    'moved on  two',
+    '          lines',
+  ])
 })
