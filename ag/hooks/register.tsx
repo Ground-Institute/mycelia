@@ -176,10 +176,10 @@ function askOf(d: Press): [string, Record<string, string | string[]>] {
   return [`/api/collected/${d.act}`, body]
 }
 
-// What stands above the prompt of a press that errored: that it errored, and
-// what answered, in one line. Never the answer itself: a page answered in
-// place of the node stood above the prompt of every session, for hours. Kept
-// refusals from before are shortened as they are drawn.
+// 「[Opus 5.5] What stands above the prompt of a press that errored: that it errored, and」
+// 「[Opus 5.5] what answered, in one line. Never the answer itself: a page answered in」
+// 「[Opus 5.5] place of the node stood above the prompt of every session, for hours. Kept」
+// 「[Opus 5.5] refusals from before are shortened as they are drawn.」
 export function shownOf(why: string): string {
   if (!why.startsWith('/api/')) return why
   const cut = why.indexOf(': ')
@@ -187,23 +187,23 @@ export function shownOf(why: string): string {
 }
 
 // "only the thing that is also shown to a user"
-// The one way something the person did is shown as having errored: told to
-// Sentry whole, through ground (`ground errored`), and one line here that says
-// whether it was.
+// 「[Opus 5.5] The one way something the person did is shown as having errored: told to」
+// 「[Opus 5.5] Sentry whole, through ground (`ground errored`), and one line here that says」
+// 「[Opus 5.5] whether it was.」
 async function errored($: EngineInterface, why: string, sessionId: string): Promise<string> {
   const told = await $.process.run(['ground', 'errored', 'ag', why], {
     env: { CLAUDE_CODE_SESSION_ID: sessionId },
     timeoutMs: 10000,
   })
   const line = why.startsWith('/api/') ? shownOf(why) : why
-  // Told is what ground says it did, and nothing else: a ground without
-  // `errored` prints its version and exits 0.
+  // 「[Opus 5.5] Told is what ground says it did, and nothing else: a ground without」
+  // 「[Opus 5.5] `errored` prints its version and exits 0.」
   return told.exitCode === 0 && told.stdout.trim() === 'left for Sentry'
     ? `${line}, reported to Sentry`
     : `${line}, and it was not reported to Sentry: this ground does not know \`ground errored\``
 }
 
-// Every press, written down after the ones before it, the last 500 kept.
+// 「[Opus 5.5] Every press, written down after the ones before it, the last 500 kept.」
 async function kept($: EngineInterface, line: string) {
   const before = (await $.fs.exists(PRESSES)) ? await $.fs.read(PRESSES) : ''
   const lines = (before + line + '\n').split('\n').filter(l => l !== '')
