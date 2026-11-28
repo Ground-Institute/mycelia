@@ -221,7 +221,7 @@ async function errored($: EngineInterface, why: string, sessionId: string, answe
   return why
 }
 
-// Every press, written down after the ones before it, the last 500 kept.
+// 「[Opus 5.5] Every press, written down after the ones before it, the last 500 kept.」
 async function kept($: EngineInterface, line: string) {
   const before = (await $.fs.exists(PRESSES)) ? await $.fs.read(PRESSES) : ''
   const lines = (before + line + '\n').split('\n').filter(l => l !== '')
