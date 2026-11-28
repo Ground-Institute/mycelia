@@ -377,8 +377,8 @@ test('what is pressed outlives the drawing: drawn anew, the pill is open, its ti
 })
 
 // What a node answers a refused press with: sacred-error's Error.
-const refusal = (title: string, why: string) =>
-  JSON.stringify({ id: 'err-1', severity: 'error', context: { surface: 'collected' }, title, why, at: at(9, 0) })
+const refusal = (title: string, why: string, trace: string[] = []) =>
+  JSON.stringify({ id: 'err-1', severity: 'error', context: { surface: 'collected' }, title, why, trace, at: at(9, 0) })
 
 test('what the node refuses is said in red under the pills, and the pill stays open', async ($, on) => {
   const asked: Asked[] = []
@@ -403,6 +403,7 @@ test('a refused approve says what the node said, whole: what was not done and wh
   engine(on, ran, ANSWER, asked, false, refusal(
     "REACH is 'http:vault:list' of SUPER was not done on kapteyn",
     '403 Forbidden: the vault routes are ROOT\'s in the compiled reach table',
+    ['google:1101 approved it at laye', 'laye asked QNTX http://127.0.0.1:8770/auth/laye/reach to do it on kapteyn', 'kapteyn answered 403 Forbidden'],
   ))
   const ui = await mounted($)
 
@@ -410,7 +411,12 @@ test('a refused approve says what the node said, whole: what was not done and wh
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
   const why = await ui.find({ type: 'Text', text: 'was not done on kapteyn' })
-  expect(why?.text).toBe("REACH is 'http:vault:list' of SUPER was not done on kapteyn: 403 Forbidden: the vault routes are ROOT's in the compiled reach table")
+  expect(why?.text).toBe([
+    "REACH is 'http:vault:list' of SUPER was not done on kapteyn: 403 Forbidden: the vault routes are ROOT's in the compiled reach table",
+    '  ← google:1101 approved it at laye',
+    '  ← laye asked QNTX http://127.0.0.1:8770/auth/laye/reach to do it on kapteyn',
+    '  ← kapteyn answered 403 Forbidden',
+  ].join('\n'))
   expect(why?.props.color).toBe('red')
   expect((await pieces(ui)).some(t => t.text.includes('Sentry'))).toBe(false)
   await ui.unmount()

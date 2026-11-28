@@ -186,7 +186,10 @@ function askOf(d: Press): [string, Record<string, string | string[]>] {
 export function failureOf(path: string, status: string, body: string): string {
   try {
     const failure = decode(JSON.parse(body))
-    return failure.why ? `${failure.title}: ${failure.why}` : failure.title
+    // "it means threaded through"
+    // 「[Opus 5.5] The way it went, hop by hop, under what went wrong.」
+    const said = failure.why ? `${failure.title}: ${failure.why}` : failure.title
+    return [said, ...(failure.trace ?? []).map(hop => `  ← ${hop}`)].join('\n')
   } catch (notAnError) {
     void notAnError
     // 「[Opus 5.5] What answered instead of the node says what happened: a page's own」
