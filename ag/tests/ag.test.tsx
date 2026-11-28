@@ -56,7 +56,8 @@ function engine(on: Parameters<Parameters<typeof test>[1]>[1], ran: string[][], 
   if (!clocked) on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => {
     ran.push([...e.argv])
-    return { value: { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' } }
+    const stdout = e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : e.argv[1] === 'errored' ? 'left for Sentry\n' : ''
+    return { value: { exitCode: 0, stdout, stderr: '' } }
   })
 }
 
@@ -409,14 +410,15 @@ test('a press that errored is one line, and the whole answer is told to Sentry t
   await ui.unmount()
 })
 
-test('a press that errored and could not be told to Sentry says so', async ($, on) => {
+test('a ground that does not know errored is not taken for one that told Sentry', async ($, on) => {
   const asked: Asked[] = []
   mycelia(on, asked, ANSWER, false, 'not yours')
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
   on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => ({
-    value: e.argv[1] === 'errored' ? { exitCode: 2, stdout: '', stderr: 'no such command' }
+    // A ground without errored: its version, and 0.
+    value: e.argv[1] === 'errored' ? { exitCode: 0, stdout: 'ground f4fb194 built 2026-11-28T08:07:50Z — Ground Control for Agentic AI\n', stderr: '' }
       : { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' },
   }))
   const ui = await mounted($)
@@ -425,7 +427,7 @@ test('a press that errored and could not be told to Sentry says so', async ($, o
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
   const why = await ui.find({ type: 'Text', text: 'a press errored' })
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, and it was not reported to Sentry: ground errored exited 2')
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, and it was not reported to Sentry: this ground does not know `ground errored`')
   await ui.unmount()
 })
 

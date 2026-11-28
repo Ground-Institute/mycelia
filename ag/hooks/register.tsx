@@ -196,9 +196,11 @@ async function errored($: EngineInterface, why: string, sessionId: string): Prom
     timeoutMs: 10000,
   })
   const line = why.startsWith('/api/') ? shownOf(why) : why
-  return told.exitCode === 0
+  // Told is what ground says it did, and nothing else: a ground without
+  // `errored` prints its version and exits 0.
+  return told.exitCode === 0 && told.stdout.trim() === 'left for Sentry'
     ? `${line}, reported to Sentry`
-    : `${line}, and it was not reported to Sentry: ground errored exited ${told.exitCode}`
+    : `${line}, and it was not reported to Sentry: this ground does not know \`ground errored\``
 }
 
 // Every press, written down after the ones before it, the last 500 kept.
