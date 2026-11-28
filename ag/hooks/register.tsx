@@ -188,7 +188,9 @@ export function failureOf(path: string, status: string, body: string): string {
     const failure = decode(JSON.parse(body))
     return failure.why ? `${failure.title}: ${failure.why}` : failure.title
   } catch (notAnError) {
-    return `${path} answered ${status}, and not with an Error (${String(notAnError)})`
+    // 「[Opus 5.5] Why it did not read is the reader's own business, not the person's.」
+    void notAnError
+    return `${path} answered ${status}, and not with an Error`
   }
 }
 
