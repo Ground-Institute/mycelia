@@ -176,23 +176,6 @@ function askOf(d: Press): [string, Record<string, string | string[]>] {
   return [`/api/collected/${d.act}`, body]
 }
 
-// Why a press was not done, as the person reads it: laye's own error, or, for a
-// page answered in place of the node, the page's title. The whole answer is
-// kept in the presses written down; a page stood above the prompt of every
-// session that pressed, for hours (2026-11-28, Cloudflare's 502).
-export function whyOf(answer: string): string {
-  const text = answer.trim()
-  try {
-    const said = JSON.parse(text) as { error?: unknown }
-    if (typeof said?.error === 'string' && said.error !== '') return said.error
-  } catch {}
-  const lower = text.toLowerCase()
-  const open = lower.indexOf('<title>')
-  const close = open < 0 ? -1 : lower.indexOf('</title>', open)
-  if (close > open) return text.slice(open + '<title>'.length, close).trim()
-  return text
-}
-
 // What stands above the prompt of a press that errored: that it errored, and
 // what answered, in one line. Never the answer itself: a page answered in
 // place of the node stood above the prompt of every session, for hours. Kept
@@ -201,6 +184,28 @@ export function shownOf(why: string): string {
   if (!why.startsWith('/api/')) return why
   const cut = why.indexOf(': ')
   return `a press errored: ${cut < 0 ? why : why.slice(0, cut)}`
+}
+
+// "only the thing that is also shown to a user"
+// The one way something the person did is shown as having errored: told to
+// Sentry whole, through ground (`ground errored`), and one line here that says
+// whether it was.
+async function errored($: EngineInterface, why: string, sessionId: string): Promise<string> {
+  const told = await $.process.run(['ground', 'errored', 'ag', why], {
+    env: { CLAUDE_CODE_SESSION_ID: sessionId },
+    timeoutMs: 10000,
+  })
+  const line = why.startsWith('/api/') ? shownOf(why) : why
+  return told.exitCode === 0
+    ? `${line}, reported to Sentry`
+    : `${line}, and it was not reported to Sentry: ground errored exited ${told.exitCode}`
+}
+
+// Every press, written down after the ones before it, the last 500 kept.
+async function kept($: EngineInterface, line: string) {
+  const before = (await $.fs.exists(PRESSES)) ? await $.fs.read(PRESSES) : ''
+  const lines = (before + line + '\n').split('\n').filter(l => l !== '')
+  await $.fs.write(PRESSES, lines.slice(-500).join('\n') + '\n')
 }
 
 // A press at mycelia: null when the node did it, else why not. A secret
@@ -221,7 +226,7 @@ async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
     const [status, ...rest] = r.text.split('\n')
     if (status === '401') { secret = ''; continue }
     if (status === '200') return null
-    return `${path} ${status === '0' ? 'was not asked' : `answered ${status}`}: ${whyOf(rest.join('\n'))}`
+    return `${path} ${status === '0' ? 'was not asked' : `answered ${status}`}: ${rest.join('\n')}`
   }
   return `${path}: ag was not paired with your finger`
 }
@@ -241,15 +246,17 @@ async function press($: EngineInterface, d: Press, sessionId: string) {
     } catch (err) {
       why = `mycelia was not reached at ${SOCKET}: ${String(err)}`
     }
-    await update($, refused, () => why)
-    await $.fs.write(PRESSES, JSON.stringify({ at: await $.clock.now(), press: d, refused: why }) + '\n')
+    await kept($, JSON.stringify({ at: await $.clock.now(), press: d, refused: why }))
+    const shown = why === null ? null : await errored($, why, sessionId)
+    await update($, refused, () => shown)
     return why === null
   }
   const argv = argvOf(d)
   const r = await $.process.run(argv, { env: { CLAUDE_CODE_SESSION_ID: sessionId }, timeoutMs: 60000 })
   const why = r.exitCode === 0 ? null : (r.stderr || r.stdout).trim() || `${argv.join(' ')} exited ${r.exitCode}`
-  await update($, refused, () => why)
-  await $.fs.write(PRESSES, JSON.stringify({ at: await $.clock.now(), argv, exitCode: r.exitCode, stderr: r.stderr }) + '\n')
+  await kept($, JSON.stringify({ at: await $.clock.now(), argv, exitCode: r.exitCode, stderr: r.stderr }))
+  const shown = why === null ? null : await errored($, why, sessionId)
+  await update($, refused, () => shown)
   return r.exitCode === 0
 }
 

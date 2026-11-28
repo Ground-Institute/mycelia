@@ -35,6 +35,8 @@ const NOW = new Date(2026, 10, 14, 15, 0).getTime()
 function mycelia(on: Parameters<Parameters<typeof test>[1]>[1], asked: Asked[], kept = KEPT, clocked = false, refuses = '') {
   if (!clocked) on('clock.now', () => ({ value: NOW }))
   on('fs.write', () => ({ value: {} }))
+  on('fs.exists', () => ({ value: false }))
+  on('fs.read', () => ({ value: '' }))
   on('http.fetch', (_, e) => {
     const path = e.url.replace('http://mycelia', '')
     const headers = (e.init?.headers ?? {}) as Record<string, string>
@@ -383,38 +385,47 @@ test('what the node refuses is said in red under the pills, and the pill stays o
   await press(ui, `now:${IN}`)
   const why = await ui.find({ type: 'Text', text: 'a press errored' })
   expect(why?.props.color).toBe('red')
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, reported to Sentry')
   expect(await has(ui, '[now]')).toBe(true)
   await ui.unmount()
 })
 
 // A 502 laye answered came back as Cloudflare's page, and the whole page stood
 // above the prompt of every session that pressed, for hours.
-test('a page answered in place of the node is said by its title, and the page is not drawn', async ($, on) => {
+test('a press that errored is one line, and the whole answer is told to Sentry through ground', async ($, on) => {
+  const ran: string[][] = []
   const asked: Asked[] = []
-  const page = '<!DOCTYPE html>\n<html class="no-js" lang="en-US">\n<head>\n<title>ground.institute | 502: Bad gateway</title>\n<meta charset="UTF-8" />\n</head>\n<body><div id="cf-wrapper">Bad gateway</div></body>\n</html>'
-  engine(on, [], ANSWER, asked, false, page)
+  const page = '<!DOCTYPE html>\n<html class="no-js" lang="en-US">\n<head>\n<title>ground.institute | 502: Bad gateway</title>\n</head>\n<body><div id="cf-wrapper">Bad gateway</div></body>\n</html>'
+  engine(on, ran, ANSWER, asked, false, page)
   const ui = await mounted($)
 
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'answered 409' })
+  const why = await ui.find({ type: 'Text', text: 'a press errored' })
   expect(why?.props.color).toBe('red')
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, reported to Sentry')
+  expect(ran).toContainEqual(['ground', 'errored', 'ag', `/api/collected/release answered 409: ${page}`])
   await ui.unmount()
 })
 
-test('what laye refuses with is its error, not its JSON', async ($, on) => {
+test('a press that errored and could not be told to Sentry says so', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, [], ANSWER, asked, false, '{"error":"admit the key did:key:z6Mk was not done on k: 409"}')
+  mycelia(on, asked, ANSWER, false, 'not yours')
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.id', () => ({ value: 'sid' }))
+  on('clock.every', () => ({ value: {} }))
+  on('process.run', (_, e) => ({
+    value: e.argv[1] === 'errored' ? { exitCode: 2, stdout: '', stderr: 'no such command' }
+      : { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' },
+  }))
   const ui = await mounted($)
 
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'answered 409' })
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
+  const why = await ui.find({ type: 'Text', text: 'a press errored' })
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, and it was not reported to Sentry: ground errored exited 2')
   await ui.unmount()
 })
 
