@@ -391,8 +391,8 @@ test('what the node refuses is said in red under the pills, and the pill stays o
   await ui.unmount()
 })
 
-// A 502 laye answered came back as Cloudflare's page, and the whole page stood
-// above the prompt of every session that pressed, for hours.
+// 「[Opus 5.5] A 502 laye answered came back as Cloudflare's page, and the whole page stood」
+// 「[Opus 5.5] above the prompt of every session that pressed, for hours.」
 test('a press that errored is one line, and the whole answer is told to Sentry through ground', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
@@ -417,7 +417,7 @@ test('a ground that does not know errored is not taken for one that told Sentry'
   on('session.id', () => ({ value: 'sid' }))
   on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => ({
-    // A ground without errored: its version, and 0.
+    // 「[Opus 5.5] A ground without errored: its version, and 0.」
     value: e.argv[1] === 'errored' ? { exitCode: 0, stdout: 'ground f4fb194 built 2026-11-28T08:07:50Z — Ground Control for Agentic AI\n', stderr: '' }
       : { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' },
   }))
