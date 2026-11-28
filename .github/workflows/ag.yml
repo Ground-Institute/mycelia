@@ -1,0 +1,31 @@
+# "ag should be dependable"
+# "and reliable"
+# "we should be fucking strict with our linting"
+#
+# 「[Opus 5.5] ag is checked on every change: its tests and validation by the engine that」
+# 「[Opus 5.5] runs it, a lint that denies dropping a failure, and sacred-error's reader」
+# 「[Opus 5.5] byte for byte what sacred-error holds at the commit ag names.」
+name: ag
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install -g @anthropic-ai/claude-code@2.1.332
+      - run: claude plugin validate ag
+      - run: claude plugin test ag
+      - run: npx --yes -p eslint@9 -p typescript-eslint@8 -p typescript@5 eslint --config ag/eslint.config.mjs ag
+      - name: sacred-error's reader is sacred-error's
+        run: |
+          rev=$(cat ag/hooks/sacred-error.rev)
+          curl -fsSL "https://raw.githubusercontent.com/teranos/sacred-error/$rev/src/error.ts" -o /tmp/error.ts
+          diff -u /tmp/error.ts ag/hooks/sacred-error.ts
