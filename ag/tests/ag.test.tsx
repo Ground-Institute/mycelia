@@ -376,7 +376,7 @@ test('what is pressed outlives the drawing: drawn anew, the pill is open, its ti
   await again.unmount()
 })
 
-// What a node answers a refused press with: sacred-error's Error.
+// 「[Opus 5.5] What a node answers a refused press with: sacred-error's Error.」
 const refusal = (title: string, why: string, trace: string[] = []) =>
   JSON.stringify({ id: 'err-1', severity: 'error', context: { surface: 'collected' }, title, why, trace, at: at(9, 0) })
 
@@ -422,8 +422,8 @@ test('a refused approve says what the node said, whole: what was not done and wh
   await ui.unmount()
 })
 
-// A 502 laye answered came back as Cloudflare's page, and the whole page stood
-// above the prompt of every session that pressed, for hours.
+// 「[Opus 5.5] A 502 laye answered came back as Cloudflare's page, and the whole page stood」
+// 「[Opus 5.5] above the prompt of every session that pressed, for hours.」
 // 「[Opus 5.5] An answer that is not an Error is said to be that, never drawn, and handed to ground whole.」
 test('a page answered in place of an Error is said to be one; ground gets it whole, and it is not drawn', async ($, on) => {
   const ran: string[][] = []
@@ -451,7 +451,7 @@ test('what became of the report is never drawn', async ($, on) => {
   on('session.id', () => ({ value: 'sid' }))
   on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => ({
-    // A ground without errored: its version, and 0.
+    // 「[Opus 5.5] A ground without errored: its version, and 0.」
     value: e.argv[1] === 'errored' ? { exitCode: 0, stdout: 'ground f4fb194 built 2026-11-28T08:07:50Z — Ground Control for Agentic AI\n', stderr: '' }
       : { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' },
   }))
