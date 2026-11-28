@@ -1,7 +1,7 @@
 /**
- * The Sacred Error, in TypeScript. `lib.rs` writes this shape and
- * `Error.elm` reads it; this is the third reader, and the tests beside it
- * pin the same contract the other two pin.
+ * 「[Opus 5.5] The Sacred Error, in TypeScript. `lib.rs` writes this shape and」
+ * 「[Opus 5.5] `Error.elm` reads it; this is the third reader, and the tests beside it」
+ * 「[Opus 5.5] pin the same contract the other two pin.」
  */
 
 /** A closed set of four. */
@@ -67,9 +67,9 @@ function anchor(from: unknown): Anchor | undefined {
 }
 
 /**
- * Read one off the wire. An unknown severity throws rather than defaulting —
- * a failure that arrives mislabelled is worse than one that arrives loudly
- * broken, and Elm's decoder refuses the same way.
+ * 「[Opus 5.5] Read one off the wire. An unknown severity throws rather than defaulting —」
+ * 「[Opus 5.5] a failure that arrives mislabelled is worse than one that arrives loudly」
+ * 「[Opus 5.5] broken, and Elm's decoder refuses the same way.」
  */
 export function decode(payload: unknown): SacredError {
   if (typeof payload !== "object" || payload === null) {
