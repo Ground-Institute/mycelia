@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { surfaceLines } from '../hooks/surface'
+import { shownOf } from '../hooks/register'
 
 // A time on this clock, as laye keeps it: RFC3339.
 const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
@@ -380,9 +381,40 @@ test('what the node refuses is said in red under the pills, and the pill stays o
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'not yours to act on' })
+  const why = await ui.find({ type: 'Text', text: 'a press errored' })
   expect(why?.props.color).toBe('red')
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
   expect(await has(ui, '[now]')).toBe(true)
+  await ui.unmount()
+})
+
+// A 502 laye answered came back as Cloudflare's page, and the whole page stood
+// above the prompt of every session that pressed, for hours.
+test('a page answered in place of the node is said by its title, and the page is not drawn', async ($, on) => {
+  const asked: Asked[] = []
+  const page = '<!DOCTYPE html>\n<html class="no-js" lang="en-US">\n<head>\n<title>ground.institute | 502: Bad gateway</title>\n<meta charset="UTF-8" />\n</head>\n<body><div id="cf-wrapper">Bad gateway</div></body>\n</html>'
+  engine(on, [], ANSWER, asked, false, page)
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  await press(ui, `now:${IN}`)
+  const why = await ui.find({ type: 'Text', text: 'answered 409' })
+  expect(why?.props.color).toBe('red')
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
+  await ui.unmount()
+})
+
+test('what laye refuses with is its error, not its JSON', async ($, on) => {
+  const asked: Asked[] = []
+  engine(on, [], ANSWER, asked, false, '{"error":"admit the key did:key:z6Mk was not done on k: 409"}')
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  await press(ui, `now:${IN}`)
+  const why = await ui.find({ type: 'Text', text: 'answered 409' })
+  expect(why?.text).toBe('a press errored: /api/collected/release answered 409')
   await ui.unmount()
 })
 
@@ -534,4 +566,9 @@ test('a surface is what its messages leave standing, in the order said', async (
     'moved on  two',
     '          lines',
   ])
+})
+
+test('a page kept from a press before is drawn as one line; what is not a press stands as said', () => {
+  expect(shownOf('/api/collected/release answered 502: <!DOCTYPE html>\n<html>\n<title>ground.institute | 502: Bad gateway</title>')).toBe('a press errored: /api/collected/release answered 502')
+  expect(shownOf('the name stays here: it is not yours')).toBe('the name stays here: it is not yours')
 })

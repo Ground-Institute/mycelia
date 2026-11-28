@@ -176,6 +176,33 @@ function askOf(d: Press): [string, Record<string, string | string[]>] {
   return [`/api/collected/${d.act}`, body]
 }
 
+// Why a press was not done, as the person reads it: laye's own error, or, for a
+// page answered in place of the node, the page's title. The whole answer is
+// kept in the presses written down; a page stood above the prompt of every
+// session that pressed, for hours (2026-11-28, Cloudflare's 502).
+export function whyOf(answer: string): string {
+  const text = answer.trim()
+  try {
+    const said = JSON.parse(text) as { error?: unknown }
+    if (typeof said?.error === 'string' && said.error !== '') return said.error
+  } catch {}
+  const lower = text.toLowerCase()
+  const open = lower.indexOf('<title>')
+  const close = open < 0 ? -1 : lower.indexOf('</title>', open)
+  if (close > open) return text.slice(open + '<title>'.length, close).trim()
+  return text
+}
+
+// What stands above the prompt of a press that errored: that it errored, and
+// what answered, in one line. Never the answer itself: a page answered in
+// place of the node stood above the prompt of every session, for hours. Kept
+// refusals from before are shortened as they are drawn.
+export function shownOf(why: string): string {
+  if (!why.startsWith('/api/')) return why
+  const cut = why.indexOf(': ')
+  return `a press errored: ${cut < 0 ? why : why.slice(0, cut)}`
+}
+
 // A press at mycelia: null when the node did it, else why not. A secret
 // mycelia no longer holds (it restarted) is paired again, once.
 async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
@@ -194,7 +221,7 @@ async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
     const [status, ...rest] = r.text.split('\n')
     if (status === '401') { secret = ''; continue }
     if (status === '200') return null
-    return `${path} ${status === '0' ? 'was not asked' : `answered ${status}`}: ${rest.join('\n')}`
+    return `${path} ${status === '0' ? 'was not asked' : `answered ${status}`}: ${whyOf(rest.join('\n'))}`
   }
   return `${path}: ag was not paired with your finger`
 }
@@ -342,7 +369,7 @@ export const register: Register = on => {
         {band.fields.map(field => (
           <Input key={field.key} label={field.label} value={field.value} rows={field.rows} submitLabel="save" onSubmit={(says: string) => field.save(says)} />
         ))}
-        {why === null ? null : <Text color="red">{why}</Text>}
+        {why === null ? null : <Text color="red">{shownOf(why)}</Text>}
       </Box>
     )
   })
