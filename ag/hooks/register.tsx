@@ -4,6 +4,7 @@ import type { Register, EngineInterface } from 'claude-code'
 import type { Forks, Line, Said, View } from '../types'
 import { pills, FLASH_MS, WAIT_MS } from './pill'
 import type { Press } from './pill'
+import { decode } from './sacred-error'
 
 // "so its like a mushroom that pop's up, and that is ag in a sense."
 // "like, ag is just spores"
@@ -176,34 +177,36 @@ function askOf(d: Press): [string, Record<string, string | string[]>] {
   return [`/api/collected/${d.act}`, body]
 }
 
-// 「[Opus 5.5] What stands above the prompt of a press that errored: that it errored, and」
-// 「[Opus 5.5] what answered, in one line. Never the answer itself: a page answered in」
-// 「[Opus 5.5] place of the node stood above the prompt of every session, for hours. Kept」
-// 「[Opus 5.5] refusals from before are shortened as they are drawn.」
-export function shownOf(why: string): string {
-  if (!why.startsWith('/api/')) return why
-  const cut = why.indexOf(': ')
-  return `a press errored: ${cut < 0 ? why : why.slice(0, cut)}`
+// "pressing approve, the error message i get back makes sense"
+// 「[Opus 5.5] What a refused press says is the Error the node answered with, read as」
+// 「[Opus 5.5] sacred-error reads it, whole: its title and its why. An answer that is not」
+// 「[Opus 5.5] an Error is said to be one, by its status; its body is kept in the press log」
+// 「[Opus 5.5] and never drawn, as a page answered in place of the node once stood above」
+// 「[Opus 5.5] every prompt.」
+export function failureOf(path: string, status: string, body: string): string {
+  try {
+    const failure = decode(JSON.parse(body))
+    return failure.why ? `${failure.title}: ${failure.why}` : failure.title
+  } catch (notAnError) {
+    return `${path} answered ${status}, and not with an Error (${String(notAnError)})`
+  }
 }
 
 // "only the thing that is also shown to a user"
-// 「[Opus 5.5] The one way something the person did is shown as having errored: told to」
-// 「[Opus 5.5] Sentry whole, through ground (`ground errored`), and one line here that says」
-// 「[Opus 5.5] whether it was.」
-async function errored($: EngineInterface, why: string, sessionId: string): Promise<string> {
-  const told = await $.process.run(['ground', 'errored', 'ag', why], {
+// 「[Opus 5.5] The one way something the person did is shown as having errored: shown」
+// 「[Opus 5.5] whole, and handed to ground whole (`ground errored`).」
+async function errored($: EngineInterface, why: string, sessionId: string, answered = ''): Promise<string> {
+  const told = await $.process.run(['ground', 'errored', 'ag', answered && answered !== why ? `${why}\n${answered}` : why], {
     env: { CLAUDE_CODE_SESSION_ID: sessionId },
     timeoutMs: 10000,
   })
-  const line = why.startsWith('/api/') ? shownOf(why) : why
-  // 「[Opus 5.5] Told is what ground says it did, and nothing else: a ground without」
-  // 「[Opus 5.5] `errored` prints its version and exits 0.」
-  return told.exitCode === 0 && told.stdout.trim() === 'left for Sentry'
-    ? `${line}, reported to Sentry`
-    : `${line}, and it was not reported to Sentry: this ground does not know \`ground errored\``
+  // 「[Opus 5.5] The person is shown what went wrong and why, never what became of the」
+  // 「[Opus 5.5] report: that is ground's to keep, and said in the press log.」
+  await kept($, JSON.stringify({ at: await $.clock.now(), reported: told.exitCode === 0 && told.stdout.trim() === 'left for Sentry' }))
+  return why
 }
 
-// 「[Opus 5.5] Every press, written down after the ones before it, the last 500 kept.」
+// Every press, written down after the ones before it, the last 500 kept.
 async function kept($: EngineInterface, line: string) {
   const before = (await $.fs.exists(PRESSES)) ? await $.fs.read(PRESSES) : ''
   const lines = (before + line + '\n').split('\n').filter(l => l !== '')
@@ -212,12 +215,12 @@ async function kept($: EngineInterface, line: string) {
 
 // A press at mycelia: null when the node did it, else why not. A secret
 // mycelia no longer holds (it restarted) is paired again, once.
-async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
+async function atMycelia($: EngineInterface, d: Press): Promise<{ why: string, answered: string } | null> {
   const [path, body] = askOf(d)
   for (let tries = 0; tries < 2; tries++) {
     if (!secret) {
       const why = await pair($)
-      if (why) return why
+      if (why) return { why, answered: why }
     }
     const r = await $.http.fetch(`http://mycelia${path}`, {
       method: 'POST',
@@ -228,9 +231,11 @@ async function atMycelia($: EngineInterface, d: Press): Promise<string | null> {
     const [status, ...rest] = r.text.split('\n')
     if (status === '401') { secret = ''; continue }
     if (status === '200') return null
-    return `${path} ${status === '0' ? 'was not asked' : `answered ${status}`}: ${rest.join('\n')}`
+    const answered = rest.join('\n')
+    if (status === '0') return { why: `${path} was not asked: ${answered}`, answered }
+    return { why: failureOf(path, status, answered), answered }
   }
-  return `${path}: ag was not paired with your finger`
+  return { why: `${path}: ag was not paired with your finger`, answered: '' }
 }
 
 // The ground command a press is: what is pressed, on whom, and what it carries.
@@ -242,14 +247,15 @@ function argvOf(d: Press): string[] {
 // is kept for the band, and every press is written down.
 async function press($: EngineInterface, d: Press, sessionId: string) {
   if (d.act !== 'give') {
-    let why: string | null
+    let refusal: { why: string, answered: string } | null
     try {
-      why = await atMycelia($, d)
+      refusal = await atMycelia($, d)
     } catch (err) {
-      why = `mycelia was not reached at ${SOCKET}: ${String(err)}`
+      refusal = { why: `mycelia was not reached at ${SOCKET}: ${String(err)}`, answered: String(err) }
     }
-    await kept($, JSON.stringify({ at: await $.clock.now(), press: d, refused: why }))
-    const shown = why === null ? null : await errored($, why, sessionId)
+    await kept($, JSON.stringify({ at: await $.clock.now(), press: d, refused: refusal?.why ?? null, answered: refusal?.answered ?? null }))
+    const shown = refusal === null ? null : await errored($, refusal.why, sessionId, refusal.answered)
+    const why = refusal?.why ?? null
     await update($, refused, () => shown)
     return why === null
   }
@@ -378,7 +384,7 @@ export const register: Register = on => {
         {band.fields.map(field => (
           <Input key={field.key} label={field.label} value={field.value} rows={field.rows} submitLabel="save" onSubmit={(says: string) => field.save(says)} />
         ))}
-        {why === null ? null : <Text color="red">{shownOf(why)}</Text>}
+        {why === null ? null : <Text color="red">{why}</Text>}
       </Box>
     )
   })

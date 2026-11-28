@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { surfaceLines } from '../hooks/surface'
-import { shownOf } from '../hooks/register'
+import { failureOf } from '../hooks/register'
 
 // A time on this clock, as laye keeps it: RFC3339.
 const at = (h: number, m: number) => new Date(2026, 10, 14, h, m).toISOString()
@@ -376,24 +376,50 @@ test('what is pressed outlives the drawing: drawn anew, the pill is open, its ti
   await again.unmount()
 })
 
+// What a node answers a refused press with: sacred-error's Error.
+const refusal = (title: string, why: string) =>
+  JSON.stringify({ id: 'err-1', severity: 'error', context: { surface: 'collected' }, title, why, at: at(9, 0) })
+
 test('what the node refuses is said in red under the pills, and the pill stays open', async ($, on) => {
   const asked: Asked[] = []
-  engine(on, [], ANSWER, asked, false, 'what waits for it is not yours to act on')
+  engine(on, [], ANSWER, asked, false, refusal('what waits for it is not yours to act on', ''))
   const ui = await mounted($)
 
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'a press errored' })
+  const why = await ui.find({ type: 'Text', text: 'not yours to act on' })
   expect(why?.props.color).toBe('red')
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, reported to Sentry')
+  expect(why?.text).toBe('what waits for it is not yours to act on')
   expect(await has(ui, '[now]')).toBe(true)
   await ui.unmount()
 })
 
-// 「[Opus 5.5] A 502 laye answered came back as Cloudflare's page, and the whole page stood」
-// 「[Opus 5.5] above the prompt of every session that pressed, for hours.」
-test('a press that errored is one line, and the whole answer is told to Sentry through ground', async ($, on) => {
+// "pressing approve, the error message i get back makes sense"
+// 「[Opus 5.5] The node's own words reach the press whole: what was not done, where, and why.」
+test('a refused approve says what the node said, whole: what was not done and why', async ($, on) => {
+  const ran: string[][] = []
+  const asked: Asked[] = []
+  engine(on, ran, ANSWER, asked, false, refusal(
+    "REACH is 'http:vault:list' of SUPER was not done on kapteyn",
+    '403 Forbidden: the vault routes are ROOT\'s in the compiled reach table',
+  ))
+  const ui = await mounted($)
+
+  await press(ui, `pill:${IN}`)
+  await press(ui, `now:${IN}`)
+  await press(ui, `now:${IN}`)
+  const why = await ui.find({ type: 'Text', text: 'was not done on kapteyn' })
+  expect(why?.text).toBe("REACH is 'http:vault:list' of SUPER was not done on kapteyn: 403 Forbidden: the vault routes are ROOT's in the compiled reach table")
+  expect(why?.props.color).toBe('red')
+  expect((await pieces(ui)).some(t => t.text.includes('Sentry'))).toBe(false)
+  await ui.unmount()
+})
+
+// A 502 laye answered came back as Cloudflare's page, and the whole page stood
+// above the prompt of every session that pressed, for hours.
+// 「[Opus 5.5] An answer that is not an Error is said to be that, never drawn, and handed to ground whole.」
+test('a page answered in place of an Error is said to be one; ground gets it whole, and it is not drawn', async ($, on) => {
   const ran: string[][] = []
   const asked: Asked[] = []
   const page = '<!DOCTYPE html>\n<html class="no-js" lang="en-US">\n<head>\n<title>ground.institute | 502: Bad gateway</title>\n</head>\n<body><div id="cf-wrapper">Bad gateway</div></body>\n</html>'
@@ -403,21 +429,23 @@ test('a press that errored is one line, and the whole answer is told to Sentry t
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'a press errored' })
-  expect(why?.props.color).toBe('red')
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, reported to Sentry')
-  expect(ran).toContainEqual(['ground', 'errored', 'ag', `/api/collected/release answered 409: ${page}`])
+  const why = await ui.find({ type: 'Text', text: 'and not with an Error' })
+  expect(why?.text).toContain('/api/collected/release answered 409, and not with an Error')
+  expect((await pieces(ui)).some(t => t.text.includes('DOCTYPE'))).toBe(false)
+  const told = ran.find(r => r[1] === 'errored')
+  expect(told?.[3]).toContain(page)
   await ui.unmount()
 })
 
-test('a ground that does not know errored is not taken for one that told Sentry', async ($, on) => {
+// "the user shoudl not care about sentry"
+test('what became of the report is never drawn', async ($, on) => {
   const asked: Asked[] = []
-  mycelia(on, asked, ANSWER, false, 'not yours')
+  mycelia(on, asked, ANSWER, false, refusal('not yours', ''))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('session.id', () => ({ value: 'sid' }))
   on('clock.every', () => ({ value: {} }))
   on('process.run', (_, e) => ({
-    // 「[Opus 5.5] A ground without errored: its version, and 0.」
+    // A ground without errored: its version, and 0.
     value: e.argv[1] === 'errored' ? { exitCode: 0, stdout: 'ground f4fb194 built 2026-11-28T08:07:50Z — Ground Control for Agentic AI\n', stderr: '' }
       : { exitCode: 0, stdout: e.argv[1] === 'forks' && e.argv[2] === 'json' ? '{}' : '', stderr: '' },
   }))
@@ -426,8 +454,8 @@ test('a ground that does not know errored is not taken for one that told Sentry'
   await press(ui, `pill:${IN}`)
   await press(ui, `now:${IN}`)
   await press(ui, `now:${IN}`)
-  const why = await ui.find({ type: 'Text', text: 'a press errored' })
-  expect(why?.text).toBe('a press errored: /api/collected/release answered 409, and it was not reported to Sentry: this ground does not know `ground errored`')
+  const why = await ui.find({ type: 'Text', text: 'not yours' })
+  expect(why?.text).toBe('not yours')
   await ui.unmount()
 })
 
@@ -581,7 +609,8 @@ test('a surface is what its messages leave standing, in the order said', async (
   ])
 })
 
-test('a page kept from a press before is drawn as one line; what is not a press stands as said', () => {
-  expect(shownOf('/api/collected/release answered 502: <!DOCTYPE html>\n<html>\n<title>ground.institute | 502: Bad gateway</title>')).toBe('a press errored: /api/collected/release answered 502')
-  expect(shownOf('the name stays here: it is not yours')).toBe('the name stays here: it is not yours')
+test('an answer is read as sacred-error reads it: an Error whole, anything else by its status', () => {
+  expect(failureOf('/api/collected/release', '403', JSON.stringify({ id: 'e', severity: 'warn', context: { surface: 'collected' }, title: 'not done on kapteyn', why: '403 the route is ROOT\'s', at: '2026-11-28T12:00:00Z' })))
+    .toBe("not done on kapteyn: 403 the route is ROOT's")
+  expect(failureOf('/api/collected/release', '502', '<!DOCTYPE html>')).toContain('/api/collected/release answered 502, and not with an Error')
 })
