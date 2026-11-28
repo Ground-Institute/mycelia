@@ -188,9 +188,19 @@ export function failureOf(path: string, status: string, body: string): string {
     const failure = decode(JSON.parse(body))
     return failure.why ? `${failure.title}: ${failure.why}` : failure.title
   } catch (notAnError) {
-    // 「[Opus 5.5] Why it did not read is the reader's own business, not the person's.」
     void notAnError
-    return `${path} answered ${status}, and not with an Error`
+    // 「[Opus 5.5] What answered instead of the node says what happened: a page's own」
+    // 「[Opus 5.5] title names who answered and why (Cloudflare's: '<host> | 502: Bad gateway').」
+    const title = /<title>([^<]*)<\/title>/i.exec(body)?.[1]?.trim()
+    if (title) {
+      const [host, said] = title.split(' | ')
+      return said
+        ? `${host} did not answer ${path}: ${said}, answered in its place`
+        : `${path} was answered by a page in place of the node: ${title}`
+    }
+    const said = body.trim()
+    if (said && !said.startsWith('<')) return `${path} answered ${status}: ${said}`
+    return `${path} answered ${status}, with no word of what happened`
   }
 }
 
